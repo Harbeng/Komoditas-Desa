@@ -4,9 +4,10 @@ import { DialogProvider } from './context/DialogContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import DashboardLayout from './components/DashboardLayout';
 
-// Halaman Publik & Auth
+// Halaman Publik & Auth (Login dan Register Terpisah)
 import PublicDashboard from './pages/PublicDashboard';
-import AuthPage from './pages/AuthPage';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import ProfilePage from './pages/ProfilePage';
 
 // Halaman Role Admin
@@ -25,9 +26,10 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-            {/* RUTE PUBLIK */}
+            {/* RUTE PUBLIK & AUTENTIKASI */}
             <Route path="/" element={<PublicDashboard />} />
-            <Route path="/login" element={<AuthPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
 
             {/* RUTE TERPROTEKSI: ROLE ADMIN */}
             <Route path="/admin" element={<ProtectedRoute allowedRole="admin" />}>
@@ -51,6 +53,7 @@ export default function App() {
               </Route>
             </Route>
 
+            {/* JIKA MENGETIK URL SEMBARANG -> KEMBALIKAN KE DASHBOARD PUBLIK */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
