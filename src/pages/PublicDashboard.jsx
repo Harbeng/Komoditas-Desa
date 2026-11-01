@@ -1,11 +1,10 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../context/AuthContext';
 import { exportToCSV, exportToExcel } from '../lib/exportUtils';
+import { useDialog } from '../context/DialogContext';
+import PublicHeader from '../components/PublicHeader';
+import Footer from '../components/Footer';
 import {
-  LogIn,
-  LayoutDashboard,
   TrendingUp,
   TrendingDown,
   Minus,
@@ -30,12 +29,22 @@ import {
 } from 'recharts';
 
 const NAMA_BULAN_PENDEK = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
-  'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'Mei',
+  'Jun',
+  'Jul',
+  'Agu',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Des',
 ];
 
 export default function PublicDashboard() {
-  const { user, activeRole } = useAuth();
+  const { showToast } = useDialog();
   const now = new Date();
   const currentYear = now.getFullYear();
 
@@ -113,7 +122,15 @@ export default function PublicDashboard() {
       }
       return true;
     });
-  }, [laporanList, startMonth, startYear, endMonth, endYear, selectedKecId, selectedDesaId]);
+  }, [
+    laporanList,
+    startMonth,
+    startYear,
+    endMonth,
+    endYear,
+    selectedKecId,
+    selectedDesaId,
+  ]);
 
   const {
     trendItems,
@@ -125,7 +142,8 @@ export default function PublicDashboard() {
 
     filteredLaporan.forEach((lap) => {
       const key = lap.periode_tahun * 100 + lap.periode_bulan;
-      const label = `${NAMA_BULAN_PENDEK[lap.periode_bulan - 1]} ${lap.periode_tahun}`;
+      const namaBulan = NAMA_BULAN_PENDEK[lap.periode_bulan - 1];
+      const label = `${namaBulan} ${lap.periode_tahun}`;
 
       if (!periodMap.has(key)) {
         periodMap.set(key, {
@@ -289,7 +307,10 @@ export default function PublicDashboard() {
         ? 'Semua_Desa'
         : desaList.find((d) => d.id === selectedDesaId)?.nama_desa || '';
 
-    const filename = `Tren_Komoditas_${namaKec}_${namaDesa}_${NAMA_BULAN_PENDEK[startMonth - 1]}${startYear}-${NAMA_BULAN_PENDEK[endMonth - 1]}${endYear}`;
+    const bulanAwalLabel = NAMA_BULAN_PENDEK[startMonth - 1];
+    const bulanAkhirLabel = NAMA_BULAN_PENDEK[endMonth - 1];
+
+    const filename = `Tren_Komoditas_${namaKec}_${namaDesa}_${bulanAwalLabel}${startYear}-${bulanAkhirLabel}${endYear}`;
 
     const headers = [
       'No',
@@ -326,60 +347,24 @@ export default function PublicDashboard() {
         subtitle: `Wilayah: ${namaKec.replace(/_/g, ' ')} (${namaDesa.replace(
           /_/g,
           ' '
-        )}) | Rentang: ${NAMA_BULAN_PENDEK[startMonth - 1]} ${startYear} s/d ${
-          NAMA_BULAN_PENDEK[endMonth - 1]
-        } ${endYear}`,
+        )}) | Rentang: ${bulanAwalLabel} ${startYear} s/d ${bulanAkhirLabel} ${endYear}`,
         headers,
         rows,
       });
+      showToast('Laporan Excel (.xls) berhasil diunduh!', 'success');
     } else {
       exportToCSV({ filename, headers, rows });
+      showToast('Laporan CSV berhasil diunduh!', 'success');
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
-      {/* HEADER PUBLIK */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-md">
-        <div className="flex w-full items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 font-bold text-white shadow-sm shadow-indigo-600/30">
-              SK
-            </div>
-            <div>
-              <h1 className="text-base font-bold tracking-tight text-slate-900 sm:text-lg">
-                Dashboard Komoditas Desa Kabupaten
-              </h1>
-              <p className="text-xs text-slate-500">
-                Pusat Data & Monitoring Tren Komoditas 7 Kecamatan
-              </p>
-            </div>
-          </div>
+    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-800">
+      {/* KOMPONEN HEADER PUBLIK TERPISAH */}
+      <PublicHeader />
 
-          <div>
-            {user && activeRole ? (
-              <Link
-                to={activeRole === 'admin' ? '/admin/dashboard' : '/kades/dashboard'}
-                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-indigo-700 sm:text-sm"
-              >
-                <LayoutDashboard className="h-4 w-4" />
-                Panel {activeRole === 'admin' ? 'Admin' : 'Kepala Desa'}
-              </Link>
-            ) : (
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 sm:text-sm"
-              >
-                <LogIn className="h-4 w-4" />
-                Login
-              </Link>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {/* <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6"> */}
-      <main className="w-full space-y-6 px-6 py-8">
+      {/* KONTEN UTAMA FULL LAYAR */}
+      <main className="w-full flex-1 space-y-6 px-6 py-8">
         {/* PANEL FILTER WILAYAH & RENTANG WAKTU */}
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs sm:p-6">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
@@ -812,6 +797,9 @@ export default function PublicDashboard() {
           </div>
         </section>
       </main>
+
+      {/* KOMPONEN FOOTER */}
+      <Footer />
     </div>
   );
 }
