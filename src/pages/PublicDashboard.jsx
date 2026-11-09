@@ -4,29 +4,30 @@ import { exportToCSV, exportToExcel } from '../lib/exportUtils';
 import { useDialog } from '../context/DialogContext';
 import PublicHeader from '../components/PublicHeader';
 import Footer from '../components/Footer';
-import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
-  Filter,
-  MapPin,
-  Building2,
-  Calendar,
-  Search,
-  BarChart3,
-  Layers,
-  Download,
-  FileSpreadsheet,
-} from 'lucide-react';
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-} from 'recharts';
+
+// Komponen Modular Publik
+import PublicFilterPanel from '../components/public/PublicFilterPanel';
+import PublicStatsCards from '../components/public/PublicStatsCards';
+import PublicGenderChart from '../components/public/PublicGenderChart';
+import PublicEducationChart from '../components/public/PublicEducationChart';
+import PublicFeaturedCommodities from '../components/public/PublicFeaturedCommodities';
+import PublicTrendChartAndSectors from '../components/public/PublicTrendChartAndSectors';
+import PublicTrendTable from '../components/public/PublicTrendTable';
+
+const NAMA_BULAN = [
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+];
 
 const NAMA_BULAN_PENDEK = [
   'Jan',
@@ -63,6 +64,11 @@ export default function PublicDashboard() {
   const [selectedChartFieldId, setSelectedChartFieldId] = useState('ALL_TON');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // State Interaktif Diagram & Komoditas Unggulan
+  const [genderMode, setGenderMode] = useState('penduduk');
+  const [eduMode, setEduMode] = useState('murid');
+  const [featuredSectorSlug, setFeaturedSectorSlug] = useState('ALL_PRODUKSI');
+
   // State Filter Rentang Waktu
   const [startMonth, setStartMonth] = useState(1);
   const [startYear, setStartYear] = useState(currentYear);
@@ -86,7 +92,7 @@ export default function PublicDashboard() {
         supabase
           .from('laporan_desa')
           .select(
-            'id, desa_id, periode_bulan, periode_tahun, konfirmasi_sektor, desa(id, nama_desa, kecamatan_id), laporan_detail(field_id, nilai_utama, nilai_sekunder)'
+            'id, desa_id, periode_bulan, periode_tahun, konfirmasi_sektor, desa(id, nama_desa, kecamatan_id), laporan_detail(field_id, nilai_utama, nilai_sekunder, rincian_json)'
           )
           .order('periode_tahun', { ascending: true })
           .order('periode_bulan', { ascending: true }),
@@ -108,6 +114,19 @@ export default function PublicDashboard() {
     return desaList.filter((d) => d.kecamatan_id === selectedKecId);
   }, [desaList, selectedKecId]);
 
+  const activeWilayahLabel = useMemo(() => {
+    if (selectedDesaId !== 'ALL') {
+      const d = desaList.find((item) => item.id === selectedDesaId);
+      return `Desa ${d?.nama_desa || ''}`;
+    }
+    if (selectedKecId !== 'ALL') {
+      const k = kecamatanList.find((item) => item.id === selectedKecId);
+      return `Kecamatan ${k?.nama_kecamatan || ''}`;
+    }
+    return 'Seluruh Kabupaten (7 Kecamatan)';
+  }, [selectedKecId, selectedDesaId, kecamatanList, desaList]);
+
+  // Filter laporan berdasarkan Kecamatan, Desa, dan Rentang Waktu
   const filteredLaporan = useMemo(() => {
     const startKey = startYear * 100 + startMonth;
     const endKey = endYear * 100 + endMonth;
@@ -132,9 +151,164 @@ export default function PublicDashboard() {
     selectedDesaId,
   ]);
 
+  // 1. OLAH DATA DEMOGRAFI
+  const { genderChartData, educationChartData } = useMemo(() => {
+    const latestPerDesa = new Map();
+    filteredLaporan.forEach((lap) => {
+      const key = lap.periode_tahun * 100 + lap.periode_bulan;
+      const existing = latestPerDesa.get(lap.desa_id);
+      const existingKey = existing
+        ? existing.periode_tahun * 100 + existing.periode_bulan
+        : 0;
+      if (key >= existingKey) {
+        latestPerDesa.set(lap.desa_id, lap);
+      }
+    });
+
+    const latestReports = Array.from(latestPerDesa.values());
+
+    const fieldPendudukLP = fields.find(
+      (f) => f.tipe_input === 'gender_l_p' && f.nama_item.toLowerCase().includes('penduduk')
+    );
+    const fieldPnsLP = fields.find(
+      (f) => f.tipe_input === 'gender_l_p' && f.nama_item.toLowerCase().includes('pns')
+    );
+    const fieldSekolah = fields.find(
+      (f) => f.tipe_input === 'tingkat_sekolah' && f.nama_item.toLowerCase().includes('sekolah')
+    );
+    const fieldGuru = fields.find(
+      (f) => f.tipe_input === 'tingkat_sekolah' && f.nama_item.toLowerCase().includes('guru')
+    );
+    const fieldMurid = fields.find(
+      (f) => f.tipe_input === 'tingkat_sekolah' && f.nama_item.toLowerCase().includes('murid')
+    );
+    const fieldPnsDidik = fields.find((f) => f.tipe_input === 'tingkat_pendidikan');
+
+    let lakiPenduduk = 0;
+    let perempuanPenduduk = 0;
+    let lakiPns = 0;
+    let perempuanPns = 0;
+
+    const rekapSekolah = { tk_paud: 0, sd: 0, smp: 0, sma_smk: 0 };
+    const rekapGuru = { tk_paud: 0, sd: 0, smp: 0, sma_smk: 0 };
+    const rekapMurid = { tk_paud: 0, sd: 0, smp: 0, sma_smk: 0 };
+    const rekapPnsDidik = { sd: 0, smp: 0, sma: 0, diploma: 0, sarjana: 0 };
+
+    latestReports.forEach((lap) => {
+      (lap.laporan_detail || []).forEach((det) => {
+        const r = det.rincian_json || {};
+
+        if (fieldPendudukLP && det.field_id === fieldPendudukLP.id) {
+          lakiPenduduk += Number(r.laki_laki) || 0;
+          perempuanPenduduk += Number(r.perempuan) || 0;
+        }
+        if (fieldPnsLP && det.field_id === fieldPnsLP.id) {
+          lakiPns += Number(r.laki_laki) || 0;
+          perempuanPns += Number(r.perempuan) || 0;
+        }
+        if (fieldSekolah && det.field_id === fieldSekolah.id) {
+          rekapSekolah.tk_paud += Number(r.tk_paud) || 0;
+          rekapSekolah.sd += Number(r.sd) || 0;
+          rekapSekolah.smp += Number(r.smp) || 0;
+          rekapSekolah.sma_smk += Number(r.sma_smk) || 0;
+        }
+        if (fieldGuru && det.field_id === fieldGuru.id) {
+          rekapGuru.tk_paud += Number(r.tk_paud) || 0;
+          rekapGuru.sd += Number(r.sd) || 0;
+          rekapGuru.smp += Number(r.smp) || 0;
+          rekapGuru.sma_smk += Number(r.sma_smk) || 0;
+        }
+        if (fieldMurid && det.field_id === fieldMurid.id) {
+          rekapMurid.tk_paud += Number(r.tk_paud) || 0;
+          rekapMurid.sd += Number(r.sd) || 0;
+          rekapMurid.smp += Number(r.smp) || 0;
+          rekapMurid.sma_smk += Number(r.sma_smk) || 0;
+        }
+        if (fieldPnsDidik && det.field_id === fieldPnsDidik.id) {
+          rekapPnsDidik.sd += Number(r.sd) || 0;
+          rekapPnsDidik.smp += Number(r.smp) || 0;
+          rekapPnsDidik.sma += Number(r.sma) || 0;
+          rekapPnsDidik.diploma += Number(r.diploma) || 0;
+          rekapPnsDidik.sarjana += Number(r.sarjana) || 0;
+        }
+      });
+    });
+
+    const activeLaki = genderMode === 'penduduk' ? lakiPenduduk : lakiPns;
+    const activePerempuan = genderMode === 'penduduk' ? perempuanPenduduk : perempuanPns;
+    const totalGender = activeLaki + activePerempuan;
+
+    const genderData = {
+      total: totalGender,
+      satuan: genderMode === 'penduduk' ? 'Jiwa' : 'Orang',
+      items: [
+        {
+          name: 'Laki-Laki',
+          value: activeLaki,
+          persen: totalGender > 0 ? Number(((activeLaki / totalGender) * 100).toFixed(1)) : 0,
+        },
+        {
+          name: 'Perempuan',
+          value: activePerempuan,
+          persen:
+            totalGender > 0 ? Number(((activePerempuan / totalGender) * 100).toFixed(1)) : 0,
+        },
+      ],
+    };
+
+    let eduList = [];
+    let eduUnit = 'Orang';
+
+    if (eduMode === 'murid') {
+      eduUnit = 'Murid';
+      eduList = [
+        { jenjang: 'TK / PAUD', jumlah: rekapMurid.tk_paud },
+        { jenjang: 'SD / MI', jumlah: rekapMurid.sd },
+        { jenjang: 'SMP / MTs', jumlah: rekapMurid.smp },
+        { jenjang: 'SMA / SMK', jumlah: rekapMurid.sma_smk },
+      ];
+    } else if (eduMode === 'guru') {
+      eduUnit = 'Guru';
+      eduList = [
+        { jenjang: 'TK / PAUD', jumlah: rekapGuru.tk_paud },
+        { jenjang: 'SD / MI', jumlah: rekapGuru.sd },
+        { jenjang: 'SMP / MTs', jumlah: rekapGuru.smp },
+        { jenjang: 'SMA / SMK', jumlah: rekapGuru.sma_smk },
+      ];
+    } else if (eduMode === 'sekolah') {
+      eduUnit = 'Unit Sekolah';
+      eduList = [
+        { jenjang: 'TK / PAUD', jumlah: rekapSekolah.tk_paud },
+        { jenjang: 'SD / MI', jumlah: rekapSekolah.sd },
+        { jenjang: 'SMP / MTs', jumlah: rekapSekolah.smp },
+        { jenjang: 'SMA / SMK', jumlah: rekapSekolah.sma_smk },
+      ];
+    } else {
+      eduUnit = 'PNS';
+      eduList = [
+        { jenjang: 'SD', jumlah: rekapPnsDidik.sd },
+        { jenjang: 'SMP', jumlah: rekapPnsDidik.smp },
+        { jenjang: 'SMA/SMK', jumlah: rekapPnsDidik.sma },
+        { jenjang: 'D1 - D3', jumlah: rekapPnsDidik.diploma },
+        { jenjang: 'S1/S2/S3', jumlah: rekapPnsDidik.sarjana },
+      ];
+    }
+
+    return {
+      genderChartData: genderData,
+      educationChartData: {
+        unit: eduUnit,
+        total: eduList.reduce((acc, item) => acc + item.jumlah, 0),
+        items: eduList,
+      },
+    };
+  }, [filteredLaporan, fields, genderMode, eduMode]);
+
+  // 2. OLAH DATA TREN & KOMODITAS PALING MENONJOL TIAP BULAN
   const {
     trendItems,
     chartSeries,
+    monthlyTopCommodities,
     periodePembandingLabel,
     summaryStats,
   } = useMemo(() => {
@@ -142,13 +316,18 @@ export default function PublicDashboard() {
 
     filteredLaporan.forEach((lap) => {
       const key = lap.periode_tahun * 100 + lap.periode_bulan;
-      const namaBulan = NAMA_BULAN_PENDEK[lap.periode_bulan - 1];
-      const label = `${namaBulan} ${lap.periode_tahun}`;
+      const namaBulanPendek = NAMA_BULAN_PENDEK[lap.periode_bulan - 1];
+      const namaBulanLengkap = NAMA_BULAN[lap.periode_bulan - 1];
+      const label = `${namaBulanPendek} ${lap.periode_tahun}`;
+      const fullLabel = `${namaBulanLengkap} ${lap.periode_tahun}`;
 
       if (!periodMap.has(key)) {
         periodMap.set(key, {
           key,
+          bulan: lap.periode_bulan,
+          tahun: lap.periode_tahun,
           label,
+          fullLabel,
           totalsByField: {},
           luasByField: {},
           totalTonAll: 0,
@@ -185,6 +364,56 @@ export default function PublicDashboard() {
       return {
         periode: p.label,
         nilai: Number(nilaiGrafik.toFixed(2)),
+      };
+    });
+
+    const eligibleCommodityFields = fields.filter((f) => {
+      const cat = categories.find((c) => c.id === f.category_id);
+      if (!cat || cat.slug === 'demografi_desa') return false;
+
+      if (featuredSectorSlug === 'ALL_PRODUKSI') {
+        return f.satuan_utama === 'Ton';
+      }
+      return cat.slug === featuredSectorSlug;
+    });
+
+    const monthlyFeatured = sortedPeriods.map((p) => {
+      let totalSektorBulanIni = 0;
+
+      const ranked = eligibleCommodityFields
+        .map((f) => {
+          const val = Number(p.totalsByField[f.id] || 0);
+          const luas = Number(p.luasByField[f.id] || 0);
+          totalSektorBulanIni += val;
+          const cat = categories.find((c) => c.id === f.category_id);
+          return {
+            id: f.id,
+            nama_item: f.nama_item,
+            nama_kategori: cat?.nama_kategori || '-',
+            nilai: Number(val.toFixed(2)),
+            luas: Number(luas.toFixed(2)),
+            satuan: f.satuan_utama,
+            tipe_input: f.tipe_input,
+          };
+        })
+        .filter((item) => item.nilai > 0)
+        .sort((a, b) => b.nilai - a.nilai);
+
+      const top3 = ranked.slice(0, 3).map((item) => ({
+        ...item,
+        kontribusiPersen:
+          totalSektorBulanIni > 0
+            ? Number(((item.nilai / totalSektorBulanIni) * 100).toFixed(1))
+            : 0,
+      }));
+
+      return {
+        key: p.key,
+        label: p.label,
+        fullLabel: p.fullLabel,
+        winner: top3[0] || null,
+        top3,
+        totalSektorBulanIni: Number(totalSektorBulanIni.toFixed(2)),
       };
     });
 
@@ -249,6 +478,7 @@ export default function PublicDashboard() {
     return {
       trendItems: calculatedFields,
       chartSeries: series,
+      monthlyTopCommodities: monthlyFeatured,
       periodePembandingLabel: labelPembanding,
       summaryStats: {
         countNaik,
@@ -257,7 +487,13 @@ export default function PublicDashboard() {
         jumlahPeriodeAktif: sortedPeriods.length,
       },
     };
-  }, [filteredLaporan, fields, categories, selectedChartFieldId]);
+  }, [
+    filteredLaporan,
+    fields,
+    categories,
+    selectedChartFieldId,
+    featuredSectorSlug,
+  ]);
 
   const displayedTrendItems = useMemo(() => {
     return trendItems.filter((item) => {
@@ -296,7 +532,6 @@ export default function PublicDashboard() {
       });
   }, [filteredLaporan, categories]);
 
-  // Fungsi Export Data Tren Publik (Excel & CSV)
   const handleExportPublicData = (format) => {
     const namaKec =
       selectedKecId === 'ALL'
@@ -360,445 +595,80 @@ export default function PublicDashboard() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-800">
-      {/* KOMPONEN HEADER PUBLIK TERPISAH */}
       <PublicHeader />
 
-      {/* KONTEN UTAMA FULL LAYAR */}
-      <main className="w-full flex-1 space-y-6 px-6 py-8">
-        {/* PANEL FILTER WILAYAH & RENTANG WAKTU */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs sm:p-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-              <Filter className="h-4 w-4 text-indigo-600" />
-              Filter Wilayah & Rentang Waktu Analisis Tren
-            </div>
-            <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
-              Perbandingan: {periodePembandingLabel}
-            </span>
-          </div>
+      <main className="w-full flex-1 space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-8">
+        <PublicFilterPanel
+          selectedKecId={selectedKecId}
+          setSelectedKecId={setSelectedKecId}
+          setSelectedDesaId={setSelectedDesaId}
+          selectedDesaId={selectedDesaId}
+          kecamatanList={kecamatanList}
+          availableDesa={availableDesa}
+          startMonth={startMonth}
+          setStartMonth={setStartMonth}
+          startYear={startYear}
+          setStartYear={setStartYear}
+          endMonth={endMonth}
+          setEndMonth={setEndMonth}
+          endYear={endYear}
+          setEndYear={setEndYear}
+          activeWilayahLabel={activeWilayahLabel}
+          periodePembandingLabel={periodePembandingLabel}
+        />
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
-            <div className="md:col-span-3">
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                <MapPin className="h-3.5 w-3.5 text-indigo-600" />
-                Kecamatan
-              </label>
-              <select
-                value={selectedKecId}
-                onChange={(e) => {
-                  setSelectedKecId(e.target.value);
-                  setSelectedDesaId('ALL');
-                }}
-                className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-              >
-                <option value="ALL">Seluruh Kabupaten (7 Kecamatan)</option>
-                {kecamatanList.map((kec) => (
-                  <option key={kec.id} value={kec.id}>
-                    Kec. {kec.nama_kecamatan}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <PublicStatsCards
+          selectedDesaId={selectedDesaId}
+          availableDesa={availableDesa}
+          activeWilayahLabel={activeWilayahLabel}
+          summaryStats={summaryStats}
+          filteredLaporan={filteredLaporan}
+        />
 
-            <div className="md:col-span-3">
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                <Building2 className="h-3.5 w-3.5 text-emerald-600" />
-                Desa
-              </label>
-              <select
-                value={selectedDesaId}
-                onChange={(e) => setSelectedDesaId(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-              >
-                <option value="ALL">Semua Desa ({availableDesa.length})</option>
-                {availableDesa.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    Desa {d.nama_desa}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="md:col-span-3">
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                <Calendar className="h-3.5 w-3.5 text-amber-600" />
-                Dari Periode (Awal)
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={startMonth}
-                  onChange={(e) => setStartMonth(Number(e.target.value))}
-                  className="rounded-xl border border-slate-300 bg-slate-50 px-2.5 py-2 text-sm font-medium text-slate-800"
-                >
-                  {NAMA_BULAN_PENDEK.map((m, idx) => (
-                    <option key={idx + 1} value={idx + 1}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={startYear}
-                  onChange={(e) => setStartYear(Number(e.target.value))}
-                  className="rounded-xl border border-slate-300 bg-slate-50 px-2.5 py-2 text-sm font-medium text-slate-800"
-                >
-                  {[2024, 2025, 2026, 2027].map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="md:col-span-3">
-              <label className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                <Calendar className="h-3.5 w-3.5 text-indigo-600" />
-                Sampai Periode (Akhir)
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  value={endMonth}
-                  onChange={(e) => setEndMonth(Number(e.target.value))}
-                  className="rounded-xl border border-slate-300 bg-slate-50 px-2.5 py-2 text-sm font-medium text-slate-800"
-                >
-                  {NAMA_BULAN_PENDEK.map((m, idx) => (
-                    <option key={idx + 1} value={idx + 1}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={endYear}
-                  onChange={(e) => setEndYear(Number(e.target.value))}
-                  className="rounded-xl border border-slate-300 bg-slate-50 px-2.5 py-2 text-sm font-medium text-slate-800"
-                >
-                  {[2024, 2025, 2026, 2027].map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* KARTU INDIKATOR TREN UTAMA */}
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Cakupan Wilayah
-              </span>
-              <MapPin className="h-5 w-5 text-indigo-600" />
-            </div>
-            <p className="mt-2 text-2xl font-extrabold text-slate-900">
-              {selectedDesaId !== 'ALL' ? '1 Desa' : `${availableDesa.length} Desa`}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {selectedKecId === 'ALL'
-                ? `Dari ${kecamatanList.length} Kecamatan Kabupaten`
-                : 'Pada Kecamatan Terpilih'}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 shadow-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
-                Tren Komoditas Naik
-              </span>
-              <TrendingUp className="h-5 w-5 text-emerald-600" />
-            </div>
-            <p className="mt-2 text-2xl font-extrabold text-emerald-700">
-              {summaryStats.countNaik} Item
-            </p>
-            <p className="mt-1 text-xs text-emerald-700/80">
-              Mengalami kenaikan persentase
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 shadow-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-rose-800">
-                Tren Komoditas Turun
-              </span>
-              <TrendingDown className="h-5 w-5 text-rose-600" />
-            </div>
-            <p className="mt-2 text-2xl font-extrabold text-rose-700">
-              {summaryStats.countTurun} Item
-            </p>
-            <p className="mt-1 text-xs text-rose-700/80">
-              Mengalami penurunan persentase
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Laporan Dianalisis
-              </span>
-              <BarChart3 className="h-5 w-5 text-amber-600" />
-            </div>
-            <p className="mt-2 text-2xl font-extrabold text-slate-900">
-              {filteredLaporan.length} Laporan
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Tersedia di {summaryStats.jumlahPeriodeAktif} periode bulan
-            </p>
-          </div>
-        </section>
-
-        {/* GRAFIK INTERAKTIF & KONFIRMASI SEKTOR */}
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-8">
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">
-                  Grafik Pergerakan Tren Komoditas
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Visualisasi fluktuasi produksi berdasarkan rentang waktu dan wilayah terpilih.
-                </p>
-              </div>
-
-              <select
-                value={selectedChartFieldId}
-                onChange={(e) => setSelectedChartFieldId(e.target.value)}
-                className="max-w-xs rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 focus:border-indigo-600 focus:outline-none"
-              >
-                <option value="ALL_TON">Total Produksi Gabungan (Ton)</option>
-                {fields.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.nama_item} ({f.satuan_utama})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {chartSeries.length === 0 ? (
-              <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
-                Belum ada data laporan pada filter wilayah dan rentang waktu ini.
-              </div>
-            ) : (
-              <div className="h-72 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartSeries}>
-                    <defs>
-                      <linearGradient id="colorNilai" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.35} />
-                        <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="periode" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip />
-                    <Area
-                      type="monotone"
-                      dataKey="nilai"
-                      name="Volume / Jumlah"
-                      stroke="#4f46e5"
-                      strokeWidth={2.5}
-                      fillOpacity={1}
-                      fill="url(#colorNilai)"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs lg:col-span-4">
-            <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
-              <Layers className="h-5 w-5 text-indigo-600" />
-              Konfirmasi Sektor Desa
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Proporsi desa yang mengonfirmasi keberadaan sektor komoditas.
-            </p>
-
-            <div className="mt-5 space-y-4">
-              {sectorAvailability.map((sec) => {
-                const pct =
-                  sec.totalDesaLapor > 0
-                    ? Math.round((sec.desaAda / sec.totalDesaLapor) * 100)
-                    : 0;
-                return (
-                  <div
-                    key={sec.id}
-                    className="rounded-xl border border-slate-100 bg-slate-50 p-3.5"
-                  >
-                    <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                      <span>{sec.nama_kategori}</span>
-                      <span className="text-emerald-700">
-                        {sec.desaAda} / {sec.totalDesaLapor} Desa Ada ({pct}%)
-                      </span>
-                    </div>
-                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
-                      <div
-                        className="h-full rounded-full bg-emerald-500 transition-all"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <PublicGenderChart
+            activeWilayahLabel={activeWilayahLabel}
+            genderMode={genderMode}
+            setGenderMode={setGenderMode}
+            genderChartData={genderChartData}
+          />
+          <PublicEducationChart
+            activeWilayahLabel={activeWilayahLabel}
+            eduMode={eduMode}
+            setEduMode={setEduMode}
+            educationChartData={educationChartData}
+          />
         </section>
 
-        {/* TABEL RINCIAN TREN KOMODITAS + TOMBOL EXPORT EXCEL & CSV */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-4">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900">
-                Rincian Tren Komoditas & Demografi Desa
-              </h2>
-              <p className="text-xs text-slate-500">
-                Menampilkan perubahan persentase (naik/turun) dari periode awal ke periode akhir.
-              </p>
-            </div>
+        <PublicFeaturedCommodities
+          activeWilayahLabel={activeWilayahLabel}
+          featuredSectorSlug={featuredSectorSlug}
+          setFeaturedSectorSlug={setFeaturedSectorSlug}
+          monthlyTopCommodities={monthlyTopCommodities}
+        />
 
-            {/* Pencarian & Tombol Export Excel / CSV */}
-            <div className="flex flex-wrap items-center gap-2.5">
-              <div className="relative w-full sm:w-64">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Cari komoditas..."
-                  className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-sm focus:border-indigo-600 focus:outline-none"
-                />
-              </div>
+        <PublicTrendChartAndSectors
+          activeWilayahLabel={activeWilayahLabel}
+          chartSeries={chartSeries}
+          selectedChartFieldId={selectedChartFieldId}
+          setSelectedChartFieldId={setSelectedChartFieldId}
+          fields={fields}
+          sectorAvailability={sectorAvailability}
+        />
 
-              <button
-                type="button"
-                onClick={() => handleExportPublicData('excel')}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700"
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                Export Excel (.xls)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleExportPublicData('csv')}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
-              >
-                <Download className="h-4 w-4 text-indigo-600" />
-                Export CSV
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              onClick={() => setSelectedCatId('ALL')}
-              className={`rounded-xl px-3.5 py-2 text-xs font-bold transition ${
-                selectedCatId === 'ALL'
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              Semua Sektor ({trendItems.length})
-            </button>
-            {categories.map((cat) => (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCatId(cat.id)}
-                className={`rounded-xl px-3.5 py-2 text-xs font-bold transition ${
-                  selectedCatId === cat.id
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {cat.nama_kategori}
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-600">
-                <tr>
-                  <th className="px-4 py-3.5">Komoditas / Indikator</th>
-                  <th className="px-4 py-3.5">Kategori Sektor</th>
-                  <th className="px-4 py-3.5 text-right">Periode Awal</th>
-                  <th className="px-4 py-3.5 text-right">Periode Akhir</th>
-                  <th className="px-4 py-3.5 text-right">Akumulasi Rentang</th>
-                  <th className="px-4 py-3.5 text-center">Tren Persentase</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {loading ? (
-                  <tr>
-                    <td colSpan="6" className="py-10 text-center text-slate-400">
-                      Memuat data komoditas kabupaten...
-                    </td>
-                  </tr>
-                ) : displayedTrendItems.length === 0 ? (
-                  <tr>
-                    <td colSpan="6" className="py-10 text-center text-slate-400">
-                      Tidak ada komoditas yang sesuai pencarian.
-                    </td>
-                  </tr>
-                ) : (
-                  displayedTrendItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50/80">
-                      <td className="px-4 py-3.5 font-bold text-slate-900">
-                        {item.nama_item}
-                      </td>
-                      <td className="px-4 py-3.5 text-xs text-slate-500">
-                        {item.nama_kategori}
-                      </td>
-                      <td className="px-4 py-3.5 text-right font-medium text-slate-600">
-                        {item.nilaiAwal.toLocaleString('id-ID')} {item.satuan_utama}
-                      </td>
-                      <td className="px-4 py-3.5 text-right font-bold text-slate-900">
-                        {item.nilaiAkhir.toLocaleString('id-ID')} {item.satuan_utama}
-                      </td>
-                      <td className="px-4 py-3.5 text-right text-xs text-slate-600">
-                        <div>
-                          <strong>
-                            {item.totalRentangUtama.toLocaleString('id-ID')}{' '}
-                            {item.satuan_utama}
-                          </strong>
-                        </div>
-                        {item.tipe_input === 'luas_dan_produksi' && (
-                          <div className="text-[11px] text-slate-400">
-                            Lahan: {item.totalRentangSekunder.toLocaleString('id-ID')}{' '}
-                            {item.satuan_sekunder}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5 text-center">
-                        {item.statusTren === 'naik' ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
-                            <TrendingUp className="h-3.5 w-3.5" />+{item.persenChange}%
-                          </span>
-                        ) : item.statusTren === 'turun' ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-3 py-1 text-xs font-bold text-rose-800">
-                            <TrendingDown className="h-3.5 w-3.5" />
-                            {item.persenChange}%
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                            <Minus className="h-3.5 w-3.5" />
-                            0% (Stabil)
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <PublicTrendTable
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          handleExportPublicData={handleExportPublicData}
+          selectedCatId={selectedCatId}
+          setSelectedCatId={setSelectedCatId}
+          categories={categories}
+          trendItems={trendItems}
+          loading={loading}
+          displayedTrendItems={displayedTrendItems}
+        />
       </main>
 
-      {/* KOMPONEN FOOTER */}
       <Footer />
     </div>
   );
