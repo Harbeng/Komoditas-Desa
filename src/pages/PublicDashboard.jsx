@@ -90,12 +90,13 @@ export default function PublicDashboard() {
         supabase.from('form_categories').select('*').order('urutan'),
         supabase.from('form_fields').select('*').eq('is_active', true).order('urutan'),
         supabase
-          .from('laporan_desa')
-          .select(
-            'id, desa_id, periode_bulan, periode_tahun, konfirmasi_sektor, desa(id, nama_desa, kecamatan_id), laporan_detail(field_id, nilai_utama, nilai_sekunder, rincian_json)'
-          )
-          .order('periode_tahun', { ascending: true })
-          .order('periode_bulan', { ascending: true }),
+              .from('laporan_desa')
+              .select(
+                'id, desa_id, periode_bulan, periode_tahun, status, konfirmasi_sektor, desa(id, nama_desa, kecamatan_id), laporan_detail(field_id, nilai_utama, nilai_sekunder, rincian_json)'
+              )
+              .in('status', ['approved', 'delete_requested'])
+              .order('periode_tahun', { ascending: true })
+              .order('periode_bulan', { ascending: true }),
       ]);
 
       setKecamatanList(kecData || []);

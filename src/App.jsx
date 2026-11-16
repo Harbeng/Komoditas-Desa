@@ -4,7 +4,7 @@ import { DialogProvider } from './context/DialogContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import DashboardLayout from './components/DashboardLayout';
 
-// Halaman Publik & Auth (Login dan Register Terpisah)
+// Halaman Publik & Auth
 import PublicDashboard from './pages/PublicDashboard';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -13,12 +13,17 @@ import ProfilePage from './pages/ProfilePage';
 // Halaman Role Admin
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminFormBuilder from './pages/admin/AdminFormBuilder';
+import AdminQuestionRequests from './pages/admin/AdminQuestionRequests';
 import AdminDesaKecamatan from './pages/admin/AdminDesaKecamatan';
 import AdminUserManagement from './pages/admin/AdminUserManagement';
+
+// Halaman Role Approver
+import ApproverDashboard from './pages/approver/ApproverDashboard';
 
 // Halaman Role Kepala Desa
 import KadesDashboard from './pages/kades/KadesDashboard';
 import KadesInputForm from './pages/kades/KadesInputForm';
+import KadesRequestForm from './pages/kades/KadesRequestForm';
 
 export default function App() {
   return (
@@ -37,23 +42,45 @@ export default function App() {
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboard />} />
                 <Route path="form" element={<AdminFormBuilder />} />
+                <Route
+                  path="request-pertanyaan"
+                  element={<AdminQuestionRequests />}
+                />
                 <Route path="desa-kecamatan" element={<AdminDesaKecamatan />} />
                 <Route path="users" element={<AdminUserManagement />} />
                 <Route path="profile" element={<ProfilePage />} />
               </Route>
             </Route>
 
-            {/* RUTE TERPROTEKSI: ROLE KEPALA DESA */}
-            <Route path="/kades" element={<ProtectedRoute allowedRole="kepala_desa" />}>
+            {/* RUTE TERPROTEKSI: ROLE APPROVER */}
+            <Route
+              path="/approver"
+              element={<ProtectedRoute allowedRole="approver" />}
+            >
               <Route element={<DashboardLayout />}>
                 <Route index element={<Navigate to="dashboard" replace />} />
-                <Route path="dashboard" element={<KadesDashboard />} />
-                <Route path="input-data" element={<KadesInputForm />} />
+                <Route path="dashboard" element={<ApproverDashboard />} />
                 <Route path="profile" element={<ProfilePage />} />
               </Route>
             </Route>
 
-            {/* JIKA MENGETIK URL SEMBARANG -> KEMBALIKAN KE DASHBOARD PUBLIK */}
+            {/* RUTE TERPROTEKSI: ROLE KEPALA DESA */}
+            <Route
+              path="/kades"
+              element={<ProtectedRoute allowedRole="kepala_desa" />}
+            >
+              <Route element={<DashboardLayout />}>
+                <Route index element={<Navigate to="dashboard" replace />} />
+                <Route path="dashboard" element={<KadesDashboard />} />
+                <Route path="input-data" element={<KadesInputForm />} />
+                <Route
+                  path="request-pertanyaan"
+                  element={<KadesRequestForm />}
+                />
+                <Route path="profile" element={<ProfilePage />} />
+              </Route>
+            </Route>
+
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

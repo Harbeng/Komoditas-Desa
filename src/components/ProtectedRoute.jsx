@@ -14,19 +14,25 @@ export default function ProtectedRoute({ allowedRole }) {
     );
   }
 
-  // 1. Jika belum login, tidak punya profil, atau akun dikunci -> lempar ke /login
+  // 1. Jika belum login, tidak punya profil, atau akun dikunci -> arahkan ke /login
   if (!user || !profile || !profile.is_active) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // 2. Jika akun Multi-Role tetapi belum memilih role di popup -> lempar ke /login
+  // 2. Jika akun Multi-Role tetapi belum memilih role aktif -> arahkan ke /login
   if (!activeRole) {
     return <Navigate to="/login" replace />;
   }
 
-  // 3. Jika mencoba masuk ke URL milik role lain -> kembalikan ke dashboard rolenya
+  // 3. Jika mencoba mengakses URL milik role lain -> arahkan ke dashboard role aktif yang benar
   if (allowedRole && activeRole !== allowedRole) {
-    const fallbackUrl = activeRole === 'admin' ? '/admin/dashboard' : '/kades/dashboard';
+    const fallbackUrl =
+      activeRole === 'admin'
+        ? '/admin/dashboard'
+        : activeRole === 'approver'
+        ? '/approver/dashboard'
+        : '/kades/dashboard';
+
     return <Navigate to={fallbackUrl} replace />;
   }
 

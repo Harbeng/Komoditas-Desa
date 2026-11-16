@@ -9,6 +9,8 @@ import {
   Search,
   ShieldCheck,
   Building2,
+  ClipboardCheck,
+  Phone,
   X,
   CheckCircle2,
 } from 'lucide-react';
@@ -27,6 +29,7 @@ export default function AdminUserManagement() {
 
   const [editModalUser, setEditModalUser] = useState(null);
   const [editNama, setEditNama] = useState('');
+  const [editNoHp, setEditNoHp] = useState('');
   const [editRoles, setEditRoles] = useState([]);
   const [editKecId, setEditKecId] = useState('');
   const [editDesaId, setEditDesaId] = useState('');
@@ -66,7 +69,7 @@ export default function AdminUserManagement() {
         ? `Kunci Akun @${u.username}?`
         : `Aktifkan Kembali Akun @${u.username}?`,
       message: isLocking
-        ? `Pengguna "${u.nama}" tidak akan bisa login atau mengakses sistem selama akunnya dikunci.`
+        ? `Pengguna "${u.nama}" tidak akan bisa login selama akunnya dikunci.`
         : `Pengguna "${u.nama}" akan dapat kembali login ke dalam sistem.`,
       confirmText: isLocking ? 'Ya, Kunci Akun' : 'Ya, Aktifkan Akun',
       cancelText: 'Batal',
@@ -119,6 +122,7 @@ export default function AdminUserManagement() {
   const openEditModal = (u) => {
     setEditModalUser(u);
     setEditNama(u.nama);
+    setEditNoHp(u.no_hp || '');
     setEditRoles(u.roles || ['kepala_desa']);
     setEditKecId(u.kecamatan_id || '');
     setEditDesaId(u.desa_id || '');
@@ -142,6 +146,7 @@ export default function AdminUserManagement() {
       .from('profiles')
       .update({
         nama: editNama.trim(),
+        no_hp: editNoHp.trim() || null,
         roles: editRoles,
         kecamatan_id: editKecId || null,
         desa_id: editDesaId || null,
@@ -174,7 +179,7 @@ export default function AdminUserManagement() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Management User</h1>
           <p className="text-sm text-slate-500">
-            Kelola akun pengguna, ubah nama & role, kunci akun, atau ganti password tanpa password lama.
+            Kelola akun Admin, Approver, dan Kepala Desa, nomor WhatsApp, serta reset password.
           </p>
         </div>
 
@@ -195,9 +200,9 @@ export default function AdminUserManagement() {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-600">
               <tr>
-                <th className="px-5 py-3.5">Nama & Username</th>
+                <th className="px-5 py-3.5">Nama, Username & WA</th>
                 <th className="px-5 py-3.5">Hak Akses (Role)</th>
-                <th className="px-5 py-3.5">Wilayah Tugas (Desa/Kec)</th>
+                <th className="px-5 py-3.5">Wilayah Tugas</th>
                 <th className="px-5 py-3.5 text-center">Status Akun</th>
                 <th className="px-5 py-3.5 text-right">Tindakan Admin</th>
               </tr>
@@ -221,6 +226,12 @@ export default function AdminUserManagement() {
                     <td className="px-5 py-4">
                       <div className="font-bold text-slate-900">{u.nama}</div>
                       <div className="text-xs text-slate-500">@{u.username}</div>
+                      {u.no_hp && (
+                        <div className="mt-1 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                          <Phone className="h-3 w-3" />
+                          {u.no_hp}
+                        </div>
+                      )}
                     </td>
 
                     <td className="px-5 py-4">
@@ -229,6 +240,12 @@ export default function AdminUserManagement() {
                           <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
                             <ShieldCheck className="h-3.5 w-3.5" />
                             Admin
+                          </span>
+                        )}
+                        {u.roles?.includes('approver') && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                            <ClipboardCheck className="h-3.5 w-3.5" />
+                            Approver
                           </span>
                         )}
                         {u.roles?.includes('kepala_desa') && (
@@ -320,7 +337,7 @@ export default function AdminUserManagement() {
         </div>
       </div>
 
-      {/* MODAL 1: UBAH PASSWORD TANPA PASSWORD LAMA */}
+      {/* MODAL RESET PASSWORD */}
       {resetModalUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
@@ -338,15 +355,9 @@ export default function AdminUserManagement() {
             </div>
 
             <form onSubmit={handleResetPasswordSubmit} className="mt-4 space-y-4">
-              <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">
-                Anda akan mengubah password untuk akun{' '}
-                <strong>{resetModalUser.nama}</strong> (@{resetModalUser.username}) secara
-                langsung tanpa memerlukan password lama.
-              </div>
-
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase text-slate-600">
-                  Password Baru
+                  Password Baru (@{resetModalUser.username})
                 </label>
                 <input
                   type="text"
@@ -354,7 +365,7 @@ export default function AdminUserManagement() {
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Ketik password baru (min. 6 karakter)"
-                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-indigo-600 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm"
                 />
               </div>
 
@@ -369,7 +380,7 @@ export default function AdminUserManagement() {
                 <button
                   type="submit"
                   disabled={resetLoading}
-                  className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                  className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                 >
                   {resetLoading ? 'Menyimpan...' : 'Simpan Password Baru'}
                 </button>
@@ -379,7 +390,7 @@ export default function AdminUserManagement() {
         </div>
       )}
 
-      {/* MODAL 2: EDIT NAMA, ROLE & PENUGASAN DESA */}
+      {/* MODAL EDIT USER, ROLE (3 ROLE) & NOMOR WHATSAPP */}
       {editModalUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
@@ -405,7 +416,20 @@ export default function AdminUserManagement() {
                   required
                   value={editNama}
                   onChange={(e) => setEditNama(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm focus:border-indigo-600 focus:outline-none"
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase text-slate-600">
+                  No. WhatsApp / No. HP
+                </label>
+                <input
+                  type="tel"
+                  value={editNoHp}
+                  onChange={(e) => setEditNoHp(e.target.value)}
+                  placeholder="Contoh: 081234567890"
+                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2 text-sm"
                 />
               </div>
 
@@ -413,33 +437,39 @@ export default function AdminUserManagement() {
                 <label className="mb-1.5 block text-xs font-semibold uppercase text-slate-600">
                   Hak Akses (Role)
                 </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm font-medium">
+                <div className="grid grid-cols-3 gap-2">
+                  <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 p-2.5 text-xs font-semibold">
                     <input
                       type="checkbox"
                       checked={editRoles.includes('admin')}
                       onChange={() => handleToggleEditRole('admin')}
                       className="h-4 w-4 rounded text-indigo-600"
                     />
-                    <span>Role Admin</span>
+                    <span>Admin</span>
                   </label>
-                  <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm font-medium">
+                  <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 p-2.5 text-xs font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={editRoles.includes('approver')}
+                      onChange={() => handleToggleEditRole('approver')}
+                      className="h-4 w-4 rounded text-amber-600"
+                    />
+                    <span>Approver</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 p-2.5 text-xs font-semibold">
                     <input
                       type="checkbox"
                       checked={editRoles.includes('kepala_desa')}
                       onChange={() => handleToggleEditRole('kepala_desa')}
                       className="h-4 w-4 rounded text-emerald-600"
                     />
-                    <span>Kepala Desa</span>
+                    <span>Kades</span>
                   </label>
                 </div>
               </div>
 
               {editRoles.includes('kepala_desa') && (
                 <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-3.5">
-                  <p className="text-xs font-semibold text-emerald-800">
-                    Wilayah Tugas Kepala Desa:
-                  </p>
                   <div>
                     <label className="mb-1 block text-xs text-slate-600">Kecamatan</label>
                     <select
@@ -489,7 +519,7 @@ export default function AdminUserManagement() {
                 <button
                   type="submit"
                   disabled={editLoading}
-                  className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                  className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
                 >
                   {editLoading ? 'Menyimpan...' : 'Simpan Perubahan'}
                 </button>

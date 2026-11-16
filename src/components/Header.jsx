@@ -1,15 +1,35 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import NotificationBell from './NotificationBell';
 import { UserCircle, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 
 export default function Header({ onToggleSidebar, isDesktopCollapsed }) {
   const { profile, activeRole } = useAuth();
-  const profileLink = activeRole === 'admin' ? '/admin/profile' : '/kades/profile';
+
+  const profileLink =
+    activeRole === 'admin'
+      ? '/admin/profile'
+      : activeRole === 'approver'
+      ? '/approver/profile'
+      : '/kades/profile';
+
+  const roleBadgeLabel =
+    activeRole === 'admin'
+      ? 'Admin'
+      : activeRole === 'approver'
+      ? 'Approver'
+      : 'Kepala Desa';
+
+  const roleBadgeStyle =
+    activeRole === 'admin'
+      ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+      : activeRole === 'approver'
+      ? 'border-amber-200 bg-amber-50 text-amber-800'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-700';
 
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-3 shadow-2xs sm:px-6">
       <div className="flex min-w-0 items-center gap-2.5 sm:gap-3.5">
-        {/* Tombol Hamburger di HP & Tombol Panel di Desktop */}
         <button
           type="button"
           onClick={onToggleSidebar}
@@ -54,15 +74,14 @@ export default function Header({ onToggleSidebar, isDesktopCollapsed }) {
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
+      {/* Bagian Kanan: Lonceng Notifikasi & Badge Role */}
+      <div className="flex shrink-0 items-center gap-2.5">
+        <NotificationBell />
+
         <span
-          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase sm:px-3 sm:text-xs ${
-            activeRole === 'admin'
-              ? 'border border-indigo-200 bg-indigo-50 text-indigo-700'
-              : 'border border-emerald-200 bg-emerald-50 text-emerald-700'
-          }`}
+          className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase sm:px-3 sm:text-xs ${roleBadgeStyle}`}
         >
-          {activeRole === 'admin' ? 'Admin' : 'Kepala Desa'}
+          {roleBadgeLabel}
         </span>
       </div>
     </header>

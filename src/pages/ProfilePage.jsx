@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useDialog } from '../context/DialogContext';
+import { sendWhatsAppFonnte } from '../lib/notificationService';
 import {
   UserCircle,
   Shield,
@@ -11,6 +12,8 @@ import {
   Camera,
   Trash2,
   Upload,
+  Phone,
+  Send,
 } from 'lucide-react';
 
 export default function ProfilePage() {
@@ -19,6 +22,7 @@ export default function ProfilePage() {
   const fileInputRef = useRef(null);
 
   const [nama, setNama] = useState(profile?.nama || '');
+  const [noHp, setNoHp] = useState(profile?.no_hp || '');
   const [kecamatanId, setKecamatanId] = useState(profile?.kecamatan_id || '');
   const [desaId, setDesaId] = useState(profile?.desa_id || '');
   const [avatarPreview, setAvatarPreview] = useState(profile?.avatar_url || '');
@@ -30,10 +34,12 @@ export default function ProfilePage() {
   const [newPassword, setNewPassword] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  const [testingWa, setTestingWa] = useState(false);
 
   useEffect(() => {
     if (profile) {
       setNama(profile.nama || '');
+      setNoHp(profile.no_hp || '');
       setKecamatanId(profile.kecamatan_id || '');
       setDesaId(profile.desa_id || '');
       setAvatarPreview(profile.avatar_url || '');
@@ -99,12 +105,10 @@ export default function ProfilePage() {
   const handleSelectPhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (!file.type.startsWith('image/')) {
       showToast('Harap pilih file gambar (JPG, PNG, atau WEBP).', 'warning');
       return;
     }
-
     try {
       const compressed = await compressImage(file);
       setSelectedFile(compressed);
@@ -119,7 +123,6 @@ export default function ProfilePage() {
     setSelectedFile(null);
     setAvatarPreview('');
     if (fileInputRef.current) fileInputRef.current.value = '';
-    showToast('Foto dihapus dari pratinjau. Klik "Simpan Profil" untuk menyimpan.', 'info');
   };
 
   const handleUpdateProfile = async (e) => {
@@ -152,6 +155,7 @@ export default function ProfilePage() {
         .from('profiles')
         .update({
           nama: nama.trim(),
+          no_hp: noHp.trim() || null,
           kecamatan_id: kecamatanId || null,
           desa_id: desaId || null,
           avatar_url: finalAvatarUrl,
@@ -162,11 +166,41 @@ export default function ProfilePage() {
 
       await fetchProfile(user.id);
       setSelectedFile(null);
-      showToast('Profil dan foto berhasil diperbarui!', 'success');
+      showToast('Profil dan nomor WhatsApp berhasil diperbarui!', 'success');
     } catch (err) {
       showToast('Gagal memperbarui profil: ' + err.message, 'error');
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  // Fungsi Uji Coba Kirim Pesan WhatsApp via Fonnte
+  const handleTestWhatsApp = async () => {
+    if (!noHp.trim()) {
+      showToast('Masukkan nomor WhatsApp terlebih dahulu.', 'warning');
+      return;
+    }
+
+    setTestingWa(true);
+    const pesanTes = `*[TES KONEKSI SI-KOMODITAS]*\nHalo *${nama}*, nomor WhatsApp Anda (${noHp}) telah berhasil terhubung dengan sistem notifikasi otomatis SI-Komoditas Kabupaten.`;
+    const res = await sendWhatsAppFonnte(noHp.trim(), pesanTes);
+    setTestingWa(false);
+
+    if (res?.skipped) {
+      showToast(
+        'Token Fonnte (VITE_FONNTE_TOKEN) belum terdeteksi di .env atau server belum di-restart.',
+        'error'
+      );
+    } else if (res?.status === true) {
+      showToast(
+        `Pesan tes WhatsApp berhasil dikirim ke ${noHp}! Silakan cek HP Anda.`,
+        'success'
+      );
+    } else {
+      showToast(
+        `Gagal mengirim WA: ${res?.reason || res?.error || 'Pastikan Device di Fonnte berstatus Connected.'}`,
+        'error'
+      );
     }
   };
 
@@ -195,7 +229,7 @@ export default function ProfilePage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Profile Pengguna</h1>
         <p className="text-sm text-slate-500">
-          Informasi identitas akun, foto profil, dan hak akses Anda di dalam sistem.
+          Kelola identitas akun, foto profil, dan nomor WhatsApp penerima notifikasi otomatis.
         </p>
       </div>
 
@@ -234,7 +268,11 @@ export default function ProfilePage() {
                 className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase text-slate-700"
               >
                 <Shield className="h-3 w-3 text-indigo-600" />
-                {r === 'admin' ? 'Admin' : 'Kepala Desa'}
+                {r === 'admin'
+                  ? 'Admin'
+                  : r === 'approver'
+                  ? 'Approver'
+                  : 'Kepala Desa'}
               </span>
             ))}
           </div>
@@ -245,8 +283,16 @@ export default function ProfilePage() {
               <strong className="uppercase text-indigo-600">{activeRole}</strong>
             </p>
             <p className="flex items-center justify-between py-1">
+              <span>No. WhatsApp:</span>
+              <strong className="text-emerald-700">
+                {profile?.no_hp || 'Belum Diisi'}
+              </strong>
+            </p>
+            <p className="flex items-center justify-between py-1">
               <span>Desa:</span>
-              <strong className="text-slate-900">{profile?.desa?.nama_desa || '-'}</strong>
+              <strong className="text-slate-900">
+                {profile?.desa?.nama_desa || '-'}
+              </strong>
             </p>
             <p className="flex items-center justify-between py-1">
               <span>Kecamatan:</span>
@@ -263,7 +309,7 @@ export default function ProfilePage() {
             className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs"
           >
             <h3 className="mb-4 text-base font-bold text-slate-900">
-              Ubah Informasi Profil & Foto
+              Ubah Informasi Profil, Nomor WhatsApp & Foto
             </h3>
 
             <div className="space-y-4">
@@ -289,7 +335,7 @@ export default function ProfilePage() {
                       Unggah foto formal atau gambar identitas Anda
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      Format JPG, PNG, atau WEBP. Otomatis disesuaikan untuk tampilan Profile & Header.
+                      Ditampilkan di halaman Profile dan ikon kecil di Header.
                     </p>
                   </div>
 
@@ -304,7 +350,7 @@ export default function ProfilePage() {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-semibold text-indigo-600 shadow-2xs transition hover:bg-indigo-50"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50"
                     >
                       <Upload className="h-3.5 w-3.5" />
                       Pilih Foto
@@ -314,7 +360,7 @@ export default function ProfilePage() {
                       <button
                         type="button"
                         onClick={handleRemovePhoto}
-                        className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 transition hover:bg-rose-100"
+                        className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-100"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                         Hapus
@@ -324,17 +370,48 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase text-slate-600">
-                  Nama Lengkap
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={nama}
-                  onChange={(e) => setNama(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-indigo-600 focus:outline-none"
-                />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold uppercase text-slate-600">
+                    Nama Lengkap
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={nama}
+                    onChange={(e) => setNama(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-indigo-600 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase text-slate-600">
+                    <Phone className="h-3.5 w-3.5 text-emerald-600" />
+                    No. WhatsApp / No. HP (Aktif)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="tel"
+                      value={noHp}
+                      onChange={(e) => setNoHp(e.target.value)}
+                      placeholder="Contoh: 081234567890"
+                      className="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm focus:border-emerald-600 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleTestWhatsApp}
+                      disabled={testingWa}
+                      title="Kirim pesan tes ke nomor ini"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      {testingWa ? 'Mengirim...' : 'Tes WA'}
+                    </button>
+                  </div>
+                  <span className="mt-1 block text-[11px] text-slate-400">
+                    Isi nomor lalu klik <strong>Simpan Profil</strong>. Gunakan tombol <strong>Tes WA</strong> untuk menguji koneksi Fonnte.
+                  </span>
+                </div>
               </div>
 
               {profile?.roles?.includes('kepala_desa') && (

@@ -3,9 +3,15 @@ import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { useDialog } from '../../context/DialogContext';
+import { dispatchNotification } from '../../lib/notificationService';
+import {
+  NAMA_BULAN,
+  evaluateSubmissionTimeline,
+} from '../../lib/timelineUtils';
+import TimelineBanner from '../../components/TimelineBanner';
 import {
   ClipboardEdit,
-  Save,
+  Send,
   CheckCircle2,
   XCircle,
   AlertTriangle,
@@ -13,48 +19,35 @@ import {
   Calendar,
   Eye,
   Layers,
+  Clock,
+  Trash2,
+  Edit3,
+  Lock,
 } from 'lucide-react';
-
-const NAMA_BULAN = [
-  'Januari',
-  'Februari',
-  'Maret',
-  'April',
-  'Mei',
-  'Juni',
-  'Juli',
-  'Agustus',
-  'September',
-  'Oktober',
-  'November',
-  'Desember',
-];
 
 export default function KadesInputForm() {
   const { user, profile } = useAuth();
   const { showToast, showConfirm } = useDialog();
   const now = new Date();
 
-  // State Periode Laporan
   const [bulan, setBulan] = useState(now.getMonth() + 1);
   const [tahun, setTahun] = useState(now.getFullYear());
 
-  // State Master Form dari Admin
   const [categories, setCategories] = useState([]);
   const [fields, setFields] = useState([]);
   const [activeCatId, setActiveCatId] = useState('');
   const [searchItem, setSearchItem] = useState('');
 
-  // State Nilai Input & Konfirmasi Sektor
+  const [currentLaporan, setCurrentLaporan] = useState(null);
+  const [isUnlockedByAdmin, setIsUnlockedByAdmin] = useState(false);
   const [konfirmasiSektor, setKonfirmasiSektor] = useState({});
   const [inputValues, setInputValues] = useState({});
   const [riwayatLaporan, setRiwayatLaporan] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState('');
 
-  // 1. Ambil struktur kategori dan pertanyaan aktif yang disiapkan Admin
+  // Ambil struktur form
   useEffect(() => {
     const fetchMasterForm = async () => {
       const [{ data: catData }, { data: fieldData }] = await Promise.all([
@@ -69,16 +62,12 @@ export default function KadesInputForm() {
       const cats = catData || [];
       setCategories(cats);
       setFields(fieldData || []);
-
-      if (cats.length > 0) {
-        setActiveCatId(cats[0].id);
-      }
+      if (cats.length > 0) setActiveCatId(cats[0].id);
     };
-
     fetchMasterForm();
   }, []);
 
-  // 2. Ambil data laporan desa jika pada bulan & tahun tersebut sudah pernah diinput
+  // Ambil laporan periode aktif, status unlock admin, dan histori pengiriman desa
   const fetchExistingLaporan = async () => {
     if (!profile?.desa_id || categories.length === 0) {
       setLoading(false);
@@ -87,16 +76,36 @@ export default function KadesInputForm() {
 
     setLoading(true);
 
-    // Ambil laporan periode aktif
-    const { data: lap } = await supabase
-      .from('laporan_desa')
-      .select('*')
-      .eq('desa_id', profile.desa_id)
-      .eq('periode_bulan', bulan)
-      .eq('periode_tahun', tahun)
-      .maybeSingle();
+    const [{ data: lap }, { data: unlockRow }, { data: historyData }] =
+      await Promise.all([
+        supabase
+          .from('laporan_desa')
+          .select('*')
+          .eq('desa_id', profile.desa_id)
+          .eq('periode_bulan', bulan)
+          .eq('periode_tahun', tahun)
+          .maybeSingle(),
+        supabase
+          .from('desa_unlocks')
+          .select('*')
+          .eq('desa_id', profile.desa_id)
+          .eq('periode_bulan', bulan)
+          .eq('periode_tahun', tahun)
+          .maybeSingle(),
+        supabase
+          .from('laporan_desa')
+          .select(
+            '*, laporan_detail(id, field_id, nilai_utama, nilai_sekunder, rincian_json)'
+          )
+          .eq('desa_id', profile.desa_id)
+          .order('periode_tahun', { ascending: false })
+          .order('periode_bulan', { ascending: false }),
+      ]);
 
-    // Default konfirmasi sektor
+    setCurrentLaporan(lap || null);
+    setIsUnlockedByAdmin(Boolean(unlockRow));
+    setRiwayatLaporan(historyData || []);
+
     const defaultKonfirmasi = {};
     categories.forEach((c) => {
       defaultKonfirmasi[c.slug] = {
@@ -124,15 +133,6 @@ export default function KadesInputForm() {
       setInputValues({});
     }
 
-    // Ambil daftar riwayat laporan desa yang sudah pernah diinput
-    const { data: historyData } = await supabase
-      .from('laporan_desa')
-      .select('*, laporan_detail(id, field_id, nilai_utama, nilai_sekunder, rincian_json)')
-      .eq('desa_id', profile.desa_id)
-      .order('periode_tahun', { ascending: false })
-      .order('periode_bulan', { ascending: false });
-
-    setRiwayatLaporan(historyData || []);
     setLoading(false);
   };
 
@@ -140,12 +140,21 @@ export default function KadesInputForm() {
     fetchExistingLaporan();
   }, [profile?.desa_id, bulan, tahun, categories.length]);
 
-  // Handler Toggle Konfirmasi Sektor (Ada / Tidak Ada) dengan konfirmasi aplikasi
+  // Evaluasi status kunci timeline
+  const timelineInfo = evaluateSubmissionTimeline({
+    periodeBulan: bulan,
+    periodeTahun: tahun,
+    existingLaporan: currentLaporan,
+    isUnlockedByAdmin,
+  });
+
   const handleToggleSektor = async (slug, statusAda, namaKategori) => {
+    if (timelineInfo.isLocked) return;
+
     if (!statusAda) {
       const confirmed = await showConfirm({
         title: `Konfirmasi Sektor Tidak Ada?`,
-        message: `Anda menyatakan sektor "${namaKategori}" TIDAK ADA di Desa ${profile?.desa?.nama_desa}. Rincian angka pada sektor ini akan diset menjadi 0 saat disimpan.`,
+        message: `Anda menyatakan sektor "${namaKategori}" TIDAK ADA di Desa ${profile?.desa?.nama_desa}. Rincian angka pada sektor ini akan diset menjadi 0 saat dikirim.`,
         confirmText: 'Ya, Konfirmasi Tidak Ada',
         cancelText: 'Batal',
         variant: 'warning',
@@ -157,15 +166,10 @@ export default function KadesInputForm() {
       ...prev,
       [slug]: { ada: statusAda },
     }));
-
-    showToast(
-      `Sektor "${namaKategori}" diatur menjadi ${statusAda ? 'ADA' : 'TIDAK ADA'}.`,
-      'info'
-    );
   };
 
-  // Handler Perubahan Nilai Angka Tunggal & Luas/Produksi
   const handleValueChange = (fieldId, key, val) => {
+    if (timelineInfo.isLocked) return;
     setInputValues((prev) => ({
       ...prev,
       [fieldId]: {
@@ -175,8 +179,8 @@ export default function KadesInputForm() {
     }));
   };
 
-  // Handler Perubahan Rincian JSON (Laki/Perempuan, Tingkat Pendidikan, Tingkat Sekolah)
   const handleRincianChange = (fieldId, subKey, val) => {
+    if (timelineInfo.isLocked) return;
     setInputValues((prev) => {
       const currentField = prev[fieldId] || {};
       const currentRincian = currentField.rincian_json || {};
@@ -185,7 +189,6 @@ export default function KadesInputForm() {
         [subKey]: val === '' ? '' : Number(val),
       };
 
-      // Hitung otomatis total nilai_utama dari seluruh rincian
       const total = Object.values(updatedRincian).reduce(
         (acc, num) => acc + (Number(num) || 0),
         0
@@ -202,18 +205,21 @@ export default function KadesInputForm() {
     });
   };
 
-  // Simpan Seluruh Data Form & Konfirmasi Sektor ke Supabase
+  // KIRIM DATA KE ROLE APPROVER (STATUS = 'pending')
   const handleSaveData = async (e) => {
     e.preventDefault();
     if (!profile?.desa_id) return;
 
+    if (timelineInfo.isLocked) {
+      showToast(timelineInfo.lockReason, 'error');
+      return;
+    }
+
     const namaBulanAktif = NAMA_BULAN[bulan - 1];
+    const isResubmitRejected = currentLaporan?.status === 'rejected';
 
     setSaving(true);
-    setSaveMessage('');
-
     try {
-      // 1. Upsert Header Laporan Desa (beserta JSON konfirmasi sektor Ada/Tidak Ada)
       const { data: savedLaporan, error: lapError } = await supabase
         .from('laporan_desa')
         .upsert(
@@ -224,6 +230,8 @@ export default function KadesInputForm() {
             periode_tahun: tahun,
             tanggal_lapor: new Date().toISOString().split('T')[0],
             konfirmasi_sektor: konfirmasiSektor,
+            status: 'pending', // Masuk ke antrean Role Approver terlebih dahulu
+            updated_at: new Date().toISOString(),
           },
           { onConflict: 'desa_id,periode_bulan,periode_tahun' }
         )
@@ -232,16 +240,13 @@ export default function KadesInputForm() {
 
       if (lapError) throw lapError;
 
-      // 2. Siapkan baris detail untuk item yang diisi
       const detailPayloads = [];
-
       fields.forEach((f) => {
         const cat = categories.find((c) => c.id === f.category_id);
         const sektorAda = cat?.butuh_konfirmasi_sektor
           ? konfirmasiSektor[cat.slug]?.ada !== false
           : true;
 
-        // Jika sektor dikonfirmasi "Tidak Ada", set nilai menjadi 0
         if (!sektorAda) {
           detailPayloads.push({
             laporan_id: savedLaporan.id,
@@ -279,18 +284,99 @@ export default function KadesInputForm() {
         if (detailError) throw detailError;
       }
 
-      const successText = `Data komoditas Desa ${profile?.desa?.nama_desa} periode ${namaBulanAktif} ${tahun} berhasil disimpan!`;
-      setSaveMessage(successText);
-      showToast(successText, 'success');
+      // Kirim Notifikasi & WhatsApp ke Role Approver
+      await dispatchNotification({
+        targetRole: 'approver',
+        judul: isResubmitRejected
+          ? `Perbaikan Data Dikirim Ulang - Desa ${profile?.desa?.nama_desa}`
+          : `Pengiriman Data Baru - Desa ${profile?.desa?.nama_desa}`,
+        pesan: `Kepala Desa ${profile?.desa?.nama_desa} (Kec. ${
+          profile?.kecamatan?.nama_kecamatan
+        }) telah mengirimkan ${
+          isResubmitRejected ? 'perbaikan ' : ''
+        }data komoditas periode ${namaBulanAktif} ${tahun}. Mohon segera diperiksa pada panel Approver.`,
+        tipe: 'info',
+        linkTujuan: '/approver/dashboard',
+      });
+
+      showToast(
+        `Data periode ${namaBulanAktif} ${tahun} berhasil dikirim ke Role Approver untuk diperiksa!`,
+        'success'
+      );
       fetchExistingLaporan();
     } catch (err) {
-      showToast('Gagal menyimpan data: ' + err.message, 'error');
+      showToast('Gagal mengirim data: ' + err.message, 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  // Jika akun Multirole belum memilih desa di menu Profile
+  // HAPUS DATA (Langsung hapus jika masih 'pending' / 'rejected', atau Ajukan ke Approver jika sudah 'approved')
+  const handleDeleteLaporan = async (lap) => {
+    const namaBulanLap = NAMA_BULAN[lap.periode_bulan - 1];
+
+    if (lap.status === 'pending' || lap.status === 'rejected') {
+      const confirmed = await showConfirm({
+        title: `Hapus Pengiriman ${namaBulanLap} ${lap.periode_tahun}?`,
+        message: `Data periode ${namaBulanLap} ${lap.periode_tahun} belum disetujui oleh Approver sehingga dapat langsung Anda hapus.`,
+        confirmText: 'Ya, Hapus Data',
+        cancelText: 'Batal',
+        variant: 'danger',
+      });
+      if (!confirmed) return;
+
+      const { error } = await supabase
+        .from('laporan_desa')
+        .delete()
+        .eq('id', lap.id);
+
+      if (error) {
+        showToast('Gagal menghapus data: ' + error.message, 'error');
+        return;
+      }
+
+      showToast('Data pengiriman berhasil dihapus.', 'success');
+      fetchExistingLaporan();
+    } else if (lap.status === 'approved') {
+      const confirmed = await showConfirm({
+        title: `Ajukan Penghapusan ke Role Approver?`,
+        message: `Data periode ${namaBulanLap} ${lap.periode_tahun} sudah berstatus Approved (Tayang). Sesuai prosedur, penghapusan harus melalui persetujuan Role Approver terlebih dahulu.`,
+        confirmText: 'Ya, Ajukan Hapus ke Approver',
+        cancelText: 'Batal',
+        variant: 'warning',
+      });
+      if (!confirmed) return;
+
+      const { error } = await supabase
+        .from('laporan_desa')
+        .update({
+          status: 'delete_requested',
+          alasan_hapus: `Diajukan hapus oleh Kepala Desa ${profile?.nama}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', lap.id);
+
+      if (error) {
+        showToast('Gagal mengajukan penghapusan: ' + error.message, 'error');
+        return;
+      }
+
+      await dispatchNotification({
+        targetRole: 'approver',
+        judul: `Permintaan Hapus Data Approved - Desa ${profile?.desa?.nama_desa}`,
+        pesan: `Kepala Desa ${profile?.desa?.nama_desa} mengajukan penghapusan untuk data periode ${namaBulanLap} ${lap.periode_tahun} yang sebelumnya telah di-Approve.`,
+        tipe: 'warning',
+        linkTujuan: '/approver/dashboard',
+      });
+
+      showToast(
+        'Permintaan hapus berhasil dikirim ke Role Approver untuk diverifikasi.',
+        'info'
+      );
+      fetchExistingLaporan();
+    }
+  };
+
   if (!profile?.desa_id) {
     return (
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-amber-900">
@@ -299,7 +385,7 @@ export default function KadesInputForm() {
           <div>
             <h2 className="text-lg font-bold">Desa Tugas Belum Ditautkan</h2>
             <p className="mt-1 text-sm text-amber-800">
-              Akun Anda belum terhubung ke Desa tertentu. Silakan pilih Kecamatan dan Desa Anda terlebih dahulu di halaman Profile agar dapat menginput data komoditas.
+              Silakan pilih Kecamatan dan Desa Anda terlebih dahulu di halaman Profile agar dapat menginput data komoditas.
             </p>
             <Link
               to="/kades/profile"
@@ -324,42 +410,34 @@ export default function KadesInputForm() {
       f.nama_item.toLowerCase().includes(searchItem.toLowerCase())
   );
 
-  // Daftar item yang sudah memiliki nilai pada periode aktif (untuk ringkasan bawah)
-  const filledItemsThisPeriod = fields.filter((f) => {
-    const v = inputValues[f.id];
-    if (!v) return false;
-    return Number(v.nilai_utama) > 0 || Number(v.nilai_sekunder) > 0;
-  });
-
   const namaBulanTerpilih = NAMA_BULAN[bulan - 1];
 
   return (
     <div className="w-full space-y-6">
       {/* Header & Pilih Periode Laporan */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs sm:p-6">
         <div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
             <ClipboardEdit className="h-3.5 w-3.5" />
             Desa {profile?.desa?.nama_desa} — Kec. {profile?.kecamatan?.nama_kecamatan}
           </span>
-          <h1 className="mt-2 text-2xl font-bold text-slate-900">
-            Form Input Data & Komoditas Desa
+          <h1 className="mt-2 text-xl font-bold text-slate-900 sm:text-2xl">
+            Input Data & Histori Pengiriman Komoditas
           </h1>
-          <p className="text-sm text-slate-500">
-            Konfirmasi ketersediaan sektor dan isi rincian data komoditas sesuai kondisi desa.
+          <p className="text-xs text-slate-500 sm:text-sm">
+            Data yang dikirim akan diperiksa oleh Role Approver sebelum tayang di Dashboard Utama.
           </p>
         </div>
 
-        {/* Pemilih Bulan & Tahun */}
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
             <Calendar className="h-4 w-4 text-emerald-600" />
-            Periode Data:
+            Periode:
           </div>
           <select
             value={bulan}
             onChange={(e) => setBulan(Number(e.target.value))}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 focus:border-emerald-600 focus:outline-none"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800"
           >
             {NAMA_BULAN.map((nama, idx) => (
               <option key={idx + 1} value={idx + 1}>
@@ -371,7 +449,7 @@ export default function KadesInputForm() {
           <select
             value={tahun}
             onChange={(e) => setTahun(Number(e.target.value))}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 focus:border-emerald-600 focus:outline-none"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800"
           >
             {[2024, 2025, 2026, 2027].map((y) => (
               <option key={y} value={y}>
@@ -382,15 +460,34 @@ export default function KadesInputForm() {
         </div>
       </div>
 
-      {saveMessage && (
-        <div className="flex items-center gap-2.5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800 shadow-xs">
-          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
-          <span>{saveMessage}</span>
+      {/* BANNER TIMELINE MINGGU 1-2 VS MINGGU 3-4 */}
+      <TimelineBanner timelineInfo={timelineInfo} />
+
+      {/* PERINGATAN CATATAN PENOLAKAN DARI APPROVER (JIKA STATUS = 'rejected') */}
+      {currentLaporan?.status === 'rejected' && (
+        <div className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-5 shadow-xs">
+          <div className="flex items-start gap-3">
+            <XCircle className="mt-0.5 h-6 w-6 shrink-0 text-rose-600" />
+            <div className="flex-1">
+              <h3 className="text-base font-extrabold text-rose-900">
+                Data Periode {namaBulanTerpilih} {tahun} Ditolak oleh Approver — Silakan Perbaiki
+              </h3>
+              <p className="mt-1 text-xs font-medium text-rose-800">
+                Catatan dari Approver:
+              </p>
+              <div className="mt-1.5 rounded-xl border border-rose-200 bg-white p-3 text-sm font-semibold text-slate-800">
+                "{currentLaporan.catatan_approver || 'Mohon periksa kembali kesesuaian angka komoditas.'}"
+              </div>
+              <p className="mt-2 text-xs text-rose-700">
+                *Karena data ini sudah pernah dikirim sebelumnya, form Anda <strong>tidak terkunci</strong>. Silakan langsung edit angka pada form di bawah lalu klik <strong>Kirim Perbaikan Data ke Approver</strong>.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Tab Kategori Sektor */}
-      <div className="flex flex-wrap gap-2">
+      {/* TAB KATEGORI SEKTOR */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
         {categories.map((cat) => {
           const isSelected = cat.id === activeCatId;
           const statusAda = cat.butuh_konfirmasi_sektor
@@ -405,7 +502,7 @@ export default function KadesInputForm() {
                 setActiveCatId(cat.id);
                 setSearchItem('');
               }}
-              className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+              className={`flex shrink-0 items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition ${
                 isSelected
                   ? 'bg-emerald-600 text-white shadow-sm'
                   : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -430,10 +527,13 @@ export default function KadesInputForm() {
         })}
       </div>
 
-      {/* Area Form Utama */}
+      {/* FORM INPUT KOMODITAS */}
       <form onSubmit={handleSaveData} className="space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-          {/* Baris Atas: Judul Sektor & Tombol Konfirmasi ADA / TIDAK ADA */}
+        <div
+          className={`rounded-2xl border border-slate-200 bg-white p-5 shadow-xs sm:p-6 ${
+            timelineInfo.isLocked ? 'opacity-75' : ''
+          }`}
+        >
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-5">
             <div>
               <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
@@ -441,9 +541,7 @@ export default function KadesInputForm() {
                 {activeCategory?.nama_kategori}
               </h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                {activeCategory?.butuh_konfirmasi_sektor
-                  ? 'Pilih konfirmasi apakah sektor komoditas ini ADA atau TIDAK ADA di desa Anda. Rincian jumlah bersifat opsional.'
-                  : 'Isi data demografi, pemerintahan, dan pendidikan desa Anda.'}
+                Konfirmasi ketersediaan sektor dan isi rincian data komoditas desa.
               </p>
             </div>
 
@@ -451,6 +549,7 @@ export default function KadesInputForm() {
               <div className="flex items-center gap-2 rounded-xl bg-slate-100 p-1.5">
                 <button
                   type="button"
+                  disabled={timelineInfo.isLocked}
                   onClick={() =>
                     handleToggleSektor(
                       activeCategory.slug,
@@ -469,6 +568,7 @@ export default function KadesInputForm() {
                 </button>
                 <button
                   type="button"
+                  disabled={timelineInfo.isLocked}
                   onClick={() =>
                     handleToggleSektor(
                       activeCategory.slug,
@@ -489,7 +589,6 @@ export default function KadesInputForm() {
             )}
           </div>
 
-          {/* Konten Input Berdasarkan Konfirmasi Sektor */}
           {loading ? (
             <div className="py-12 text-center text-sm text-slate-400">
               Memuat form komoditas...
@@ -500,19 +599,18 @@ export default function KadesInputForm() {
               <h3 className="mt-2 text-base font-bold text-slate-800">
                 Sektor "{activeCategory?.nama_kategori}" Dikonfirmasi Tidak Ada
               </h3>
-              <p className="mx-auto mt-1 max-w-md text-xs text-slate-500">
-                Anda telah mengonfirmasi bahwa sektor ini tidak terdapat di Desa{' '}
-                {profile?.desa?.nama_desa}. Anda tidak perlu mengisi rincian angka di
-                bawah dan dapat langsung menyimpan atau berpindah ke sektor lain.
-              </p>
             </div>
           ) : (
             <div className="mt-5 space-y-5">
-              {/* Bar Pencarian Komoditas di dalam Sektor */}
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs text-amber-800">
-                  <strong>Info Pengisian:</strong> Tidak semua item wajib diisi. Cukup isi
-                  komoditas yang datanya tersedia di desa Anda.
+                  Belum menemukan pertanyaan/komoditas yang dicari?{' '}
+                  <Link
+                    to="/kades/request-pertanyaan"
+                    className="font-bold underline hover:text-amber-950"
+                  >
+                    Ajukan Tambah Pertanyaan ke Admin
+                  </Link>
                 </div>
 
                 <div className="relative w-full sm:w-72">
@@ -527,7 +625,6 @@ export default function KadesInputForm() {
                 </div>
               </div>
 
-              {/* Grid Item Form */}
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 {activeFields.map((field) => {
                   const val = inputValues[field.id] || {};
@@ -547,7 +644,6 @@ export default function KadesInputForm() {
                         </span>
                       </div>
 
-                      {/* TIPE 1: ANGKA TUNGGAL */}
                       {field.tipe_input === 'angka_tunggal' && (
                         <div>
                           <label className="mb-1 block text-xs text-slate-500">
@@ -558,12 +654,13 @@ export default function KadesInputForm() {
                               type="number"
                               min="0"
                               step="any"
+                              disabled={timelineInfo.isLocked}
                               value={val.nilai_utama ?? ''}
                               onChange={(e) =>
                                 handleValueChange(field.id, 'nilai_utama', e.target.value)
                               }
                               placeholder="0"
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
                             />
                             <span className="shrink-0 text-xs font-semibold text-slate-500">
                               {field.satuan_utama}
@@ -572,7 +669,6 @@ export default function KadesInputForm() {
                         </div>
                       )}
 
-                      {/* TIPE 2: PRODUKSI & LUAS LAHAN */}
                       {field.tipe_input === 'luas_dan_produksi' && (
                         <div className="grid grid-cols-2 gap-3">
                           <div>
@@ -583,12 +679,13 @@ export default function KadesInputForm() {
                               type="number"
                               min="0"
                               step="any"
+                              disabled={timelineInfo.isLocked}
                               value={val.nilai_utama ?? ''}
                               onChange={(e) =>
                                 handleValueChange(field.id, 'nilai_utama', e.target.value)
                               }
                               placeholder="0"
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
                             />
                           </div>
                           <div>
@@ -599,6 +696,7 @@ export default function KadesInputForm() {
                               type="number"
                               min="0"
                               step="any"
+                              disabled={timelineInfo.isLocked}
                               value={val.nilai_sekunder ?? ''}
                               onChange={(e) =>
                                 handleValueChange(
@@ -608,13 +706,12 @@ export default function KadesInputForm() {
                                 )
                               }
                               placeholder="0"
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
                             />
                           </div>
                         </div>
                       )}
 
-                      {/* TIPE 3: GENDER LAKI-LAKI / PEREMPUAN */}
                       {field.tipe_input === 'gender_l_p' && (
                         <div className="grid grid-cols-2 gap-3">
                           <div>
@@ -624,12 +721,13 @@ export default function KadesInputForm() {
                             <input
                               type="number"
                               min="0"
+                              disabled={timelineInfo.isLocked}
                               value={rincian.laki_laki ?? ''}
                               onChange={(e) =>
                                 handleRincianChange(field.id, 'laki_laki', e.target.value)
                               }
                               placeholder="0"
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
                             />
                           </div>
                           <div>
@@ -639,18 +737,18 @@ export default function KadesInputForm() {
                             <input
                               type="number"
                               min="0"
+                              disabled={timelineInfo.isLocked}
                               value={rincian.perempuan ?? ''}
                               onChange={(e) =>
                                 handleRincianChange(field.id, 'perempuan', e.target.value)
                               }
                               placeholder="0"
-                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
+                              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm disabled:bg-slate-100"
                             />
                           </div>
                         </div>
                       )}
 
-                      {/* TIPE 4: TINGKAT PENDIDIKAN */}
                       {field.tipe_input === 'tingkat_pendidikan' && (
                         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
                           {[
@@ -667,6 +765,7 @@ export default function KadesInputForm() {
                               <input
                                 type="number"
                                 min="0"
+                                disabled={timelineInfo.isLocked}
                                 value={rincian[jenjang.key] ?? ''}
                                 onChange={(e) =>
                                   handleRincianChange(
@@ -676,14 +775,13 @@ export default function KadesInputForm() {
                                   )
                                 }
                                 placeholder="0"
-                                className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-emerald-600 focus:outline-none"
+                                className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm disabled:bg-slate-100"
                               />
                             </div>
                           ))}
                         </div>
                       )}
 
-                      {/* TIPE 5: TINGKAT SEKOLAH (SEKOLAH / GURU / MURID) */}
                       {field.tipe_input === 'tingkat_sekolah' && (
                         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                           {[
@@ -699,6 +797,7 @@ export default function KadesInputForm() {
                               <input
                                 type="number"
                                 min="0"
+                                disabled={timelineInfo.isLocked}
                                 value={rincian[tingkat.key] ?? ''}
                                 onChange={(e) =>
                                   handleRincianChange(
@@ -708,7 +807,7 @@ export default function KadesInputForm() {
                                   )
                                 }
                                 placeholder="0"
-                                className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-emerald-600 focus:outline-none"
+                                className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm disabled:bg-slate-100"
                               />
                             </div>
                           ))}
@@ -721,119 +820,165 @@ export default function KadesInputForm() {
             </div>
           )}
 
-          {/* Tombol Simpan Permanen */}
+          {/* Tombol Kirim ke Approver */}
           <div className="mt-6 flex items-center justify-end border-t border-slate-100 pt-5">
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:bg-emerald-700 disabled:opacity-50"
-            >
-              <Save className="h-4 w-4" />
-              {saving
-                ? 'Menyimpan Data Desa...'
-                : `Simpan Data Periode ${namaBulanTerpilih} ${tahun}`}
-            </button>
+            {timelineInfo.isLocked ? (
+              <div className="inline-flex items-center gap-2 rounded-xl bg-slate-200 px-5 py-3 text-xs font-bold text-slate-600">
+                <Lock className="h-4 w-4" />
+                Pengiriman Terkunci untuk Periode Ini
+              </div>
+            ) : (
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
+                {saving
+                  ? 'Mengirim ke Approver...'
+                  : currentLaporan?.status === 'rejected'
+                  ? `Kirim Perbaikan Data (${namaBulanTerpilih} ${tahun})`
+                  : `Kirim Data ke Approver (${namaBulanTerpilih} ${tahun})`}
+              </button>
+            )}
           </div>
         </div>
       </form>
 
-      {/* BAGIAN BAWAH: MENAMPILKAN DATA YANG SUDAH DIINPUT */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-        <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-4">
+      {/* TABEL HISTORI PENGIRIMAN LENGKAP DENGAN STATUS, CATATAN APPROVER, EDIT & HAPUS */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs sm:p-6">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-4">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
               <Eye className="h-5 w-5 text-emerald-600" />
-              Data yang Sudah Diinput ({namaBulanTerpilih} {tahun})
+              Histori Pengiriman Data Desa {profile?.desa?.nama_desa}
             </h2>
             <p className="text-xs text-slate-500">
-              Ringkasan item komoditas dan demografi yang telah memiliki nilai pada periode ini.
+              Pantau status verifikasi Approver, catatan perbaikan jika ditolak, serta kelola penghapusan data.
             </p>
           </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-            {filledItemsThisPeriod.length} Item Terisi
-          </span>
         </div>
 
-        {filledItemsThisPeriod.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-400">
-            Belum ada rincian angka yang diinput pada periode {namaBulanTerpilih} {tahun}.
-          </p>
-        ) : (
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-600">
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[680px] text-left text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-600">
+              <tr>
+                <th className="px-4 py-3.5">Periode Laporan</th>
+                <th className="px-4 py-3.5">Tanggal Kirim</th>
+                <th className="px-4 py-3.5 text-center">Item Terisi</th>
+                <th className="px-4 py-3.5 text-center">Status Pengiriman</th>
+                <th className="px-4 py-3.5">Catatan Approver</th>
+                <th className="px-4 py-3.5 text-right">Tindakan (Edit / Hapus)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {riwayatLaporan.length === 0 ? (
                 <tr>
-                  <th className="px-4 py-3">Kategori Sektor</th>
-                  <th className="px-4 py-3">Nama Komoditas / Pertanyaan</th>
-                  <th className="px-4 py-3">Data Tersimpan</th>
+                  <td colSpan="6" className="py-8 text-center text-slate-400">
+                    Belum ada histori pengiriman data untuk desa ini.
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200">
-                {filledItemsThisPeriod.map((f) => {
-                  const cat = categories.find((c) => c.id === f.category_id);
-                  const v = inputValues[f.id] || {};
-                  return (
-                    <tr key={f.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 text-xs font-semibold text-slate-500">
-                        {cat?.nama_kategori}
-                      </td>
-                      <td className="px-4 py-3 font-bold text-slate-800">{f.nama_item}</td>
-                      <td className="px-4 py-3 text-slate-700">
-                        {f.tipe_input === 'luas_dan_produksi' ? (
-                          <span>
-                            Produksi: <strong>{v.nilai_utama || 0} {f.satuan_utama}</strong> | Luas
-                            Lahan: <strong>{v.nilai_sekunder || 0} {f.satuan_sekunder}</strong>
-                          </span>
-                        ) : f.tipe_input === 'angka_tunggal' ? (
-                          <strong>
-                            {v.nilai_utama} {f.satuan_utama}
-                          </strong>
-                        ) : (
-                          <span className="text-xs">
-                            Total: <strong>{v.nilai_utama} {f.satuan_utama}</strong> (
-                            {Object.entries(v.rincian_json || {})
-                              .map(([k, valNum]) => `${k.toUpperCase()}: ${valNum || 0}`)
-                              .join(', ')}
-                            )
-                          </span>
+              ) : (
+                riwayatLaporan.map((lap) => (
+                  <tr key={lap.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3.5 font-bold text-slate-900">
+                      {NAMA_BULAN[lap.periode_bulan - 1]} {lap.periode_tahun}
+                    </td>
+                    <td className="px-4 py-3.5 text-xs text-slate-500">
+                      {lap.tanggal_lapor}
+                    </td>
+                    <td className="px-4 py-3.5 text-center font-semibold text-slate-700">
+                      {lap.laporan_detail?.length || 0} Item
+                    </td>
+                    <td className="px-4 py-3.5 text-center">
+                      {lap.status === 'pending' && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+                          <Clock className="h-3.5 w-3.5" />
+                          Menunggu Approver
+                        </span>
+                      )}
+                      {lap.status === 'approved' && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Disetujui (Published)
+                        </span>
+                      )}
+                      {lap.status === 'rejected' && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-3 py-1 text-xs font-bold text-rose-800">
+                          <XCircle className="h-3.5 w-3.5" />
+                          Ditolak (Perlu Edit)
+                        </span>
+                      )}
+                      {lap.status === 'delete_requested' && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-800">
+                          <Clock className="h-3.5 w-3.5" />
+                          Menunggu Hapus Approver
+                        </span>
+                      )}
+                    </td>
+                    <td className="max-w-xs px-4 py-3.5 text-xs">
+                      {lap.status === 'rejected' && lap.catatan_approver ? (
+                        <div className="rounded-lg border border-rose-200 bg-rose-50 p-2 font-medium text-rose-800">
+                          {lap.catatan_approver}
+                        </div>
+                      ) : lap.status === 'approved' ? (
+                        <span className="text-emerald-700 font-medium">
+                          Data sesuai & tayang di Dashboard Publik
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3.5 text-right">
+                      <div className="inline-flex items-center gap-1.5">
+                        {/* Tombol Edit (Tersedia untuk 'pending' dan 'rejected') */}
+                        {(lap.status === 'pending' || lap.status === 'rejected') && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setBulan(lap.periode_bulan);
+                              setTahun(lap.periode_tahun);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            {lap.status === 'rejected' ? 'Perbaiki Data' : 'Edit'}
+                          </button>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
 
-        {/* Riwayat Periode Pelaporan Desa */}
-        {riwayatLaporan.length > 0 && (
-          <div className="mt-6 border-t border-slate-100 pt-5">
-            <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">
-              Riwayat Periode yang Pernah Dilaporkan Desa {profile?.desa?.nama_desa}
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {riwayatLaporan.map((lap) => (
-                <button
-                  key={lap.id}
-                  type="button"
-                  onClick={() => {
-                    setBulan(lap.periode_bulan);
-                    setTahun(lap.periode_tahun);
-                  }}
-                  className={`rounded-xl border px-3.5 py-2 text-xs font-semibold transition ${
-                    lap.periode_bulan === bulan && lap.periode_tahun === tahun
-                      ? 'border-emerald-600 bg-emerald-50 text-emerald-800'
-                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  {NAMA_BULAN[lap.periode_bulan - 1]} {lap.periode_tahun} (
-                  {lap.laporan_detail?.length || 0} item)
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+                        {/* Tombol Hapus Langsung (Jika masih 'pending' atau 'rejected') */}
+                        {(lap.status === 'pending' || lap.status === 'rejected') && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteLaporan(lap)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Hapus
+                          </button>
+                        )}
+
+                        {/* Tombol Ajukan Hapus ke Approver (Jika sudah 'approved') */}
+                        {lap.status === 'approved' && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteLaporan(lap)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100"
+                            title="Harus melalui persetujuan Role Approver"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Minta Hapus ke Approver
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
