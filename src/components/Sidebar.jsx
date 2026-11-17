@@ -176,7 +176,7 @@ export default function Sidebar({
               </div>
 
               <div className={`${isDesktopCollapsed ? 'lg:hidden' : 'block'}`}>
-                <h2 className="text-sm font-bold text-slate-900">SI-Komoditas</h2>
+                <h2 className="text-sm font-bold text-slate-900">MANTAP BOLTIM</h2>
                 <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600">
                   {activeRole === 'admin'
                     ? 'Role Admin'
