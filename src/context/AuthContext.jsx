@@ -1,111 +1,124 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext({});
 
+const ACTIVE_ROLE_STORAGE_KEY = 'si_komoditas_active_role';
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [activeRole, setActiveRole] = useState(() => sessionStorage.getItem('activeRole') || null);
+  const [activeRole, setActiveRole] = useState(() => {
+    return sessionStorage.getItem(ACTIVE_ROLE_STORAGE_KEY) || null;
+  });
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (userId) => {
-    try {
+  const selectRole = useCallback((role) => {
+    setActiveRole(role);
+    if (role) {
+      sessionStorage.setItem(ACTIVE_ROLE_STORAGE_KEY, role);
+    } else {
+      sessionStorage.removeItem(ACTIVE_ROLE_STORAGE_KEY);
+    }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setProfile(null);
+    setActiveRole(null);
+    sessionStorage.removeItem(ACTIVE_ROLE_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_ROLE_STORAGE_KEY);
+  }, []);
+
+  const fetchProfile = useCallback(
+    async (userId) => {
+      if (!userId) return null;
+
       const { data, error } = await supabase
         .from('profiles')
         .select('*, kecamatan(id, nama_kecamatan), desa(id, nama_desa)')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error || !data) {
         setProfile(null);
         return null;
       }
 
-      // Cek apakah akun dikunci / dinonaktifkan oleh Admin
       if (!data.is_active) {
-        await supabase.auth.signOut();
-        setUser(null);
-        setProfile(null);
-        setActiveRole(null);
-        sessionStorage.removeItem('activeRole');
-        throw new Error('Akun Anda telah dinonaktifkan atau dikunci oleh Admin.');
+        await signOut();
+        return null;
       }
 
       setProfile(data);
 
-      // Jika hanya memiliki 1 role, langsung aktifkan role tersebut
-      if (data.roles?.length === 1) {
-        const singleRole = data.roles[0];
-        setActiveRole(singleRole);
-        sessionStorage.setItem('activeRole', singleRole);
-      } else {
-        // Jika multi-role, pastikan activeRole yang tersimpan masih valid
-        const savedRole = sessionStorage.getItem('activeRole');
-        if (savedRole && data.roles?.includes(savedRole)) {
-          setActiveRole(savedRole);
-        } else {
-          setActiveRole(null);
-        }
+      // Validasi apakah role di sessionStorage masih dimiliki oleh user ini
+      const savedRole = sessionStorage.getItem(ACTIVE_ROLE_STORAGE_KEY);
+      if (savedRole && data.roles?.includes(savedRole)) {
+        setActiveRole(savedRole);
+      } else if (data.roles?.length === 1 && savedRole) {
+        selectRole(data.roles[0]);
       }
 
       return data;
-    } catch (err) {
-      console.error('Error fetching profile:', err.message);
-      throw err;
-    }
-  };
+    },
+    [selectRole, signOut]
+  );
 
   useEffect(() => {
     let mounted = true;
 
     const initSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!mounted) return;
+      setLoading(true);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (session?.user) {
-        setUser(session.user);
-        try {
-          await fetchProfile(session.user.id);
-        } catch {
-          // Ditangani di dalam fetchProfile
+      const savedRole = sessionStorage.getItem(ACTIVE_ROLE_STORAGE_KEY);
+
+      // Jika ada sesi token lama di browser tetapi tab baru dibuka tanpa activeRole,
+      // bersihkan sesi agar saat klik Login wajib memasukkan username & password
+      if (session?.user && !savedRole) {
+        await supabase.auth.signOut();
+        if (mounted) {
+          setUser(null);
+          setProfile(null);
+          setActiveRole(null);
+          setLoading(false);
         }
+        return;
       }
-      setLoading(false);
+
+      if (session?.user && mounted) {
+        setUser(session.user);
+        await fetchProfile(session.user.id);
+      }
+      if (mounted) setLoading(false);
     };
 
     initSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
-      setUser(session?.user ?? null);
-
-      if (!session?.user) {
-        setProfile(null);
-        setActiveRole(null);
-        sessionStorage.removeItem('activeRole');
-        setLoading(false);
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_OUT' || !session?.user) {
+          if (mounted) {
+            setUser(null);
+            setProfile(null);
+            setActiveRole(null);
+            sessionStorage.removeItem(ACTIVE_ROLE_STORAGE_KEY);
+          }
+        } else if (session?.user && mounted) {
+          setUser(session.user);
+        }
       }
-    });
+    );
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
+      authListener?.subscription?.unsubscribe();
     };
-  }, []);
-
-  const selectRole = (role) => {
-    setActiveRole(role);
-    sessionStorage.setItem('activeRole', role);
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
-    setActiveRole(null);
-    sessionStorage.removeItem('activeRole');
-  };
+  }, [fetchProfile]);
 
   return (
     <AuthContext.Provider

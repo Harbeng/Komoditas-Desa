@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase, formatUsernameToEmail } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -14,6 +14,7 @@ import {
   LogIn,
   UserPlus,
   Wheat,
+  X,
 } from 'lucide-react';
 
 const FALLBACK_BG =
@@ -21,7 +22,7 @@ const FALLBACK_BG =
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { user, profile, activeRole, selectRole, fetchProfile } = useAuth();
+  const { user, profile, activeRole, selectRole, fetchProfile, signOut } = useAuth();
   const { showToast } = useDialog();
 
   const [username, setUsername] = useState('');
@@ -29,6 +30,9 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showRoleModal, setShowRoleModal] = useState(false);
+
+  // Penanda bahwa user baru saja menekan tombol "Masuk Sekarang"
+  const isManualLoginRef = useRef(false);
 
   const [bgSrc, setBgSrc] = useState('/bg-auth.jpg');
   const [logoError, setLogoError] = useState(false);
@@ -40,17 +44,24 @@ export default function LoginPage() {
   };
 
   useEffect(() => {
-    if (user && profile && activeRole && !showRoleModal) {
+    // 1. Jika user sudah login penuh (punya user, profile, dan activeRole), arahkan ke dashboardnya
+    if (user && profile && activeRole && !showRoleModal && !isManualLoginRef.current) {
       navigate(getRoleRedirectUrl(activeRole), { replace: true });
-    } else if (user && profile && profile.roles?.length > 1 && !activeRole) {
-      setShowRoleModal(true);
+      return;
     }
-  }, [user, profile, activeRole, showRoleModal, navigate]);
+
+    // 2. Jika ada sisa sesi menggantung (user ada tapi belum punya activeRole)
+    // dan user BELUM menekan tombol Login, bersihkan sesi lama agar wajib isi username & password
+    if (user && !activeRole && !isManualLoginRef.current && !submitting) {
+      signOut();
+    }
+  }, [user, profile, activeRole, showRoleModal, submitting, navigate, signOut]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setErrorMsg('');
     setSubmitting(true);
+    isManualLoginRef.current = true;
 
     try {
       const internalEmail = formatUsernameToEmail(username);
@@ -68,15 +79,22 @@ export default function LoginPage() {
         throw new Error('Profil pengguna tidak ditemukan di sistem.');
       }
 
-      if (userProfile.roles.length > 1) {
+      if (!userProfile.is_active) {
+        await signOut();
+        throw new Error('Akun Anda sedang dikunci oleh Admin.');
+      }
+
+      // Popup Pilih Role HANYA muncul setelah username & password diverifikasi benar
+      if (userProfile.roles?.length > 1) {
         setShowRoleModal(true);
       } else {
-        const singleRole = userProfile.roles[0];
+        const singleRole = userProfile.roles?.[0] || 'kepala_desa';
         selectRole(singleRole);
         showToast(`Selamat datang kembali, ${userProfile.nama}!`, 'success');
-        navigate(getRoleRedirectUrl(singleRole));
+        navigate(getRoleRedirectUrl(singleRole), { replace: true });
       }
     } catch (err) {
+      isManualLoginRef.current = false;
       setErrorMsg(err.message);
       showToast(err.message, 'error');
     } finally {
@@ -87,7 +105,20 @@ export default function LoginPage() {
   const handleChooseModalRole = (chosenRole) => {
     selectRole(chosenRole);
     setShowRoleModal(false);
-    navigate(getRoleRedirectUrl(chosenRole));
+    isManualLoginRef.current = false;
+    showToast(
+      `Selamat datang, ${profile?.nama || 'Pengguna'}!`,
+      'success'
+    );
+    navigate(getRoleRedirectUrl(chosenRole), { replace: true });
+  };
+
+  // Jika pengguna menekan tombol Batal pada modal Pilih Role, batalkan login
+  const handleCancelRoleModal = async () => {
+    setShowRoleModal(false);
+    isManualLoginRef.current = false;
+    setPassword('');
+    await signOut();
   };
 
   return (
@@ -198,10 +229,19 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* POPUP PEMILIHAN ROLE (MENDUKUNG ADMIN, APPROVER, & KEPALA DESA) */}
+      {/* POPUP PEMILIHAN ROLE (Hanya muncul setelah berhasil memasukkan Username & Password) */}
       {showRoleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+          <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <button
+              type="button"
+              onClick={handleCancelRoleModal}
+              title="Batal & Kembali ke Form Login"
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
             <div className="text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
                 <ShieldCheck className="h-6 w-6" />

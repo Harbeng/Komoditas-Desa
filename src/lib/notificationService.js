@@ -96,7 +96,7 @@ export async function dispatchNotification({
       .filter(Boolean);
 
     if (phoneNumbers.length > 0) {
-      const waText = `*[SI-KOMODITAS KABUPATEN]*\n*${judul}*\n\n${pesan}\n\n_Notifikasi Otomatis Sistem Informasi Komoditas Desa_`;
+      const waText = `*[SI-MANTAP BOLTIM]*\n*${judul}*\n\n${pesan}\n\n_Notifikasi Otomatis Sistem Informasi Mantap Boltim_`;
       await sendWhatsAppFonnte(phoneNumbers, waText);
     }
   } catch (err) {

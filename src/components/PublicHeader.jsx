@@ -40,10 +40,10 @@ export default function PublicHeader() {
 
           <div className="min-w-0">
             <h1 className="truncate text-sm font-bold tracking-tight text-slate-900 sm:text-lg">
-              Dashboard Komoditas Desa
+              Dashboard Mantap Boltim
             </h1>
             <p className="truncate text-[11px] text-slate-500 sm:text-xs">
-              Monitoring Tren & Demografi 7 Kecamatan (Data Terverifikasi)
+              Manajemen Data Terpadu Boltim
             </p>
           </div>
         </Link>
